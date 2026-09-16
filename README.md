@@ -20,7 +20,7 @@ Orders are sealed, proven in your browser, and crossed in fixed windows where ev
 
 <br/>
 
-<img src="public/assets/darkpool-hero-social.png" alt="DarkpoolFi: your order shouldn't be public before it fills" width="880" />
+<img src="https://raw.githubusercontent.com/DarkPoolFi/DarkPoolFinance/main/public/assets/darkpool-hero-social.png?v=2" alt="DarkpoolFi: your order shouldn't be public before it fills" width="880" />
 
 </div>
 
