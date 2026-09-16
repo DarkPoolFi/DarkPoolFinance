@@ -80,8 +80,19 @@ export interface TransactMemo {
 
 export const EVENT_NAMES = ["Deposited", "Transacted", "OrderResting", "WindowSettled", "WindowAbandoned", "OrderReclaimed"];
 
-/** Public pool data from the site API (`base` = "" in the browser). */
-export async function loadPool<C>(base = "") {
+/** The public pool data a client holds between syncs (TU-13). Only chain data: never keys or anything decrypted. */
+export interface PoolSnapshot {
+  pool: string; // lowercase pool address the data belongs to
+  leaves: bigint[];
+  events: PoolEvent[];
+}
+
+/**
+ * Public pool data from the site API (`base` = "" in the browser). With `prev` from the same pool it fetches only what
+ * is new: leaves after the last known index, and events from the last known block on (that block is read again and
+ * replaced, so a block read half-way last time is completed). The result equals a full load.
+ */
+export async function loadPool<C>(base = "", prev: PoolSnapshot | null = null) {
   const get = async <T,>(path: string): Promise<T> => {
     const res = await fetch(base + path, { cache: "no-store" });
     const body = await res.json().catch(() => null);
@@ -89,20 +100,31 @@ export async function loadPool<C>(base = "") {
     return body.data as T;
   };
   const config = await get<C>("/api/pool");
-  const leaves: string[] = [];
-  for (;;) {
-    const page = await get<{ leaves: string[] }>(`/api/pool/leaves?from=${leaves.length}`);
-    leaves.push(...page.leaves);
+  const pool = String((config as { pool?: string }).pool ?? "").toLowerCase();
+  const queued = Number((config as { tree?: { queued?: number } }).tree?.queued ?? Number.POSITIVE_INFINITY);
+  // the mirror never shrinks for a pool; if it looks like it did, trust nothing cached
+  const known = prev && prev.pool === pool && prev.leaves.length <= queued ? prev : null;
+
+  const fresh: string[] = [];
+  for (const from = known?.leaves.length ?? 0; ; ) {
+    const page = await get<{ leaves: string[] }>(`/api/pool/leaves?from=${from + fresh.length}`);
+    fresh.push(...page.leaves);
     if (page.leaves.length < 50_000) break;
   }
-  const events = await loadEvents(get, EVENT_NAMES);
-  return { config, leaves: leaves.map((x) => BigInt(x)), events };
+  const leaves = [...(known?.leaves ?? []), ...fresh.map((x) => BigInt(x))];
+
+  const last = known?.events.at(-1)?.block;
+  const events =
+    known && last !== undefined
+      ? [...known.events.filter((e) => e.block < last), ...(await loadEvents(get, EVENT_NAMES, last - 1))]
+      : await loadEvents(get, EVENT_NAMES);
+  return { config, pool, leaves, events };
 }
 
-export async function loadEvents(get: <T>(path: string) => Promise<T>, names: string[]) {
+export async function loadEvents(get: <T>(path: string) => Promise<T>, names: string[], from = -1) {
   const seen = new Set<string>();
   const events: PoolEvent[] = [];
-  for (let after = -1; ; ) {
+  for (let after = from; ; ) {
     const page = await get<{ events: PoolEvent[] }>(`/api/pool/events?names=${names.join(",")}&after=${after}`);
     for (const e of page.events) if (!seen.has(`${e.tx_hash}:${e.log_index}`)) seen.add(`${e.tx_hash}:${e.log_index}`) && events.push(e);
     if (page.events.length < 5_000) break;
@@ -111,9 +133,29 @@ export async function loadEvents(get: <T>(path: string) => Promise<T>, names: st
   return events.sort((a, b) => a.block - b.block || a.log_index - b.log_index);
 }
 
+/** Opens a sealed payload with an account's viewing key, or null when it is not for this account. */
+export type Opener = (sealed: string) => Promise<string | null>;
+
+/**
+ * Trial decryption, remembered: every sync replays the whole pool history, and nearly every sealed payload in it
+ * belongs to someone else. Keep one per account; the cache lives in memory only.
+ */
+export function memoOpener(viewPriv: string): Opener {
+  const cache = new Map<string, string | null>();
+  return async (sealed) => {
+    if (cache.has(sealed)) return cache.get(sealed)!;
+    const text = await open(viewPriv, sealed);
+    cache.set(sealed, text);
+    return text;
+  };
+}
+
 /** Replays the pool's public history with an account's keys. `unit(asset)` = base units per micro-unit. */
-export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], events: PoolEvent[], unit: (asset: bigint) => bigint) {
-  const { secret, owner, viewPriv, blindKey } = keys;
+export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], events: PoolEvent[], unit: (asset: bigint) => bigint, read: Opener = memoOpener(keys.viewPriv)) {
+  const { secret, owner, blindKey } = keys;
+  // leaf positions by commitment, so finding a note's index is a lookup instead of a scan over every leaf
+  const positions = new Map<bigint, number[]>();
+  leaves.forEach((c, i) => (positions.get(c)?.push(i) ?? positions.set(c, [i])));
   const notes: Note[] = [];
   const orders: MyOrder[] = [];
   const activity: Activity[] = [];
@@ -124,7 +166,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
 
   const add = (asset: bigint, amount: bigint, blinding: bigint, label: bigint, origin: string) => {
     const commitment = note(owner, asset, amount, blinding, label);
-    const index = leaves.findIndex((c, i) => c === commitment && !used.has(i));
+    const index = positions.get(commitment)?.find((i) => !used.has(i)) ?? -1;
     if (index < 0) return; // not indexed yet
     used.add(index);
     const nul = secret === undefined ? null : nullifier(secret, commitment, BigInt(index));
@@ -144,7 +186,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
   const results = new Map<bigint, SettledOrder>();
   for (const e of events.filter((x) => x.name === "WindowSettled")) {
     for (const s of parseList(e.args["notes"])) {
-      const text = s ? await open(viewPriv, s) : null;
+      const text = s ? await read(s) : null;
       if (!text) continue;
       const r = JSON.parse(text) as SettledOrder;
       results.set(BigInt(r.commitment), r);
@@ -169,7 +211,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
       }
       deposits++;
     } else if (e.name === "Transacted") {
-      const text = a["memo"] && a["memo"] !== "0x" ? await open(viewPriv, a["memo"]) : null;
+      const text = a["memo"] && a["memo"] !== "0x" ? await read(a["memo"]) : null;
       if (!text) continue; // not ours
       const memo = JSON.parse(text) as TransactMemo;
       spend(a["nullifier0"], memo.ins[0]);
@@ -194,7 +236,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
         const parent = orders.find((o) => o.status === "settled" && o.result?.rolls && commitmentOf(o.asset, rolledOpening(o)) === commitment);
         if (parent) opening = rolledOpening(parent);
       } else {
-        const memo = await readMemo(viewPriv, a["sealedOrder"]);
+        const memo = await readMemo(read, a["sealedOrder"]);
         if (memo) {
           opening = openingFromJson(memo.opening);
           if (opening && spend(memo.nullifier, memo.input)) {
@@ -252,10 +294,10 @@ function parseList(notesHex: string): string[] {
   }
 }
 
-async function readMemo(viewPriv: string, sealedOrderHex: string): Promise<OrderMemo | null> {
+async function readMemo(read: Opener, sealedOrderHex: string): Promise<OrderMemo | null> {
   try {
     const envelope = JSON.parse(toUtf8String(sealedOrderHex)) as { u?: unknown };
-    const text = typeof envelope.u === "string" ? await open(viewPriv, envelope.u) : null;
+    const text = typeof envelope.u === "string" ? await read(envelope.u) : null;
     return text ? (JSON.parse(text) as OrderMemo) : null;
   } catch {
     return null;

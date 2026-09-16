@@ -10,7 +10,7 @@ import abiWasm from "@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm?url";
 import type { CompiledCircuit } from "@noir-lang/noir_js";
 import { AbiCoder, Interface, ZeroAddress, formatUnits, getAddress, hexlify, isHexString, keccak256, toUtf8Bytes } from "ethers";
 import { KEY_MESSAGE, keysFromSignature, seal, type ShieldedKeys } from "./crypto";
-import { DEPOSIT_DOMAIN, loadPool, rebuild, type Activity, type Grant, type MyOrder, type Note, type OrderMemo, type PoolEvent, type TransactMemo } from "./ledger";
+import { DEPOSIT_DOMAIN, loadPool, memoOpener, rebuild, type Opener, type PoolSnapshot, type Activity, type Grant, type MyOrder, type Note, type OrderMemo, type PoolEvent, type TransactMemo } from "./ledger";
 import { FEE_NOTE_ORDERS, commitmentOf, feeNoteSource, openingToJson, type OrderOpening } from "./orders";
 import { DEPTH, ETH, ETH_UNIT, FIELD, PLAIN, aspLeaf, blind, depositLabel, hex, note, nullifier, orderNullifier, pathOf, ready, rootOf, unitOf, type OrderTerms } from "./protocol";
 import { portfolio } from "./pnl";
@@ -75,6 +75,53 @@ const MAX_WINDOWS_LEFT = 11; // circuits/order_validity
 const utf8Hex = (text: string) => hexlify(toUtf8Bytes(text));
 const address = (asset: bigint) => getAddress("0x" + asset.toString(16).padStart(40, "0"));
 const zeroPath = () => Array<bigint>(DEPTH).fill(0n);
+
+// Public pool data kept in IndexedDB between visits (TU-13), so a returning visitor fetches only what is new. It holds
+// what anyone can read on chain (leaves and events): never keys, notes or anything decrypted. Every failure is silent;
+// the network is always the fallback.
+const CACHE_DB = "darkpoolfi";
+const CACHE_STORE = "public";
+const CACHE_KEY = "pool";
+function cacheDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(CACHE_DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(CACHE_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+async function readPoolCache(): Promise<PoolSnapshot | null> {
+  const db = await cacheDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(CACHE_STORE).objectStore(CACHE_STORE).get(CACHE_KEY);
+      req.onsuccess = () => {
+        const v = req.result as { pool: string; leaves: string[]; events: PoolEvent[] } | undefined;
+        resolve(v?.pool && Array.isArray(v.leaves) && Array.isArray(v.events) ? { pool: v.pool, leaves: v.leaves.map((x) => BigInt(x)), events: v.events } : null);
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  }).finally(() => db.close()) as Promise<PoolSnapshot | null>;
+}
+async function writePoolCache(snapshot: PoolSnapshot) {
+  const db = await cacheDb();
+  if (!db) return;
+  try {
+    const value = { pool: snapshot.pool, leaves: snapshot.leaves.map((x) => "0x" + x.toString(16)), events: snapshot.events };
+    db.transaction(CACHE_STORE, "readwrite").objectStore(CACHE_STORE).put(value, CACHE_KEY);
+  } catch {
+    // quota or private mode: the next visit loads from the network
+  } finally {
+    db.close();
+  }
+}
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { cache: "no-store" });
@@ -181,6 +228,15 @@ export class ShieldedAccount {
     return hex(rfqCommitment({ asset: BigInt(this.marketBySymbol(b.symbol).token), qty: BigInt(b.qty), buyerPub: b.buyerPub, sellerPub: b.sellerPub, nonce: BigInt(b.nonce) }));
   }
 
+  /** Whether reused leaves reproduce the on-chain root (checked once per tree size; skipped while the index catches up). */
+  private matchesChain(d: { config: PoolConfig; leaves: bigint[] }) {
+    const size = d.config.tree.size;
+    if (size === this.verifiedSize || d.leaves.length < size) return true;
+    const ok = hex(rootOf(d.leaves.slice(0, size))) === d.config.tree.root.toLowerCase();
+    if (ok) this.verifiedSize = size;
+    return ok;
+  }
+
   marketBySymbol(symbol: string): Market {
     const m = this.config.markets.find((x) => x.symbol === symbol);
     if (!m) throw Error(`Unknown market ${symbol}.`);
@@ -192,12 +248,26 @@ export class ShieldedAccount {
   private assetOf = (symbol: string) => (symbol === "ETH" ? ETH : BigInt(this.marketBySymbol(symbol).token));
   private decimalsOf = (asset: bigint) => (asset === ETH ? 18 : this.market(asset).decimals);
 
+  private pool = "";
+  private verifiedSize = -1;
+  private opener: Opener | null = null; // trial decryptions remembered for this account, in memory only
+
+  /**
+   * Refreshes from public pool data (TU-13): the first sync starts from this browser's cache, later ones from what the
+   * account already holds, and both fetch only what is new. Anything that does not reproduce the chain's tree root is
+   * dropped and loaded again in full, so a stale or damaged cache can never produce a wrong balance or proof.
+   */
   async sync() {
-    const data = await loadPool<PoolConfig>();
+    const known = this.pool ? { pool: this.pool, leaves: this.leaves, events: this.events } : await readPoolCache();
+    let data = await loadPool<PoolConfig>("", known);
+    if (known && !this.matchesChain(data)) data = await loadPool<PoolConfig>("");
+    const changed = data.pool !== this.pool || data.leaves.length !== this.leaves.length || data.events.length !== this.events.length || data.events.at(-1)?.tx_hash !== this.events.at(-1)?.tx_hash;
     this.config = data.config;
+    this.pool = data.pool;
     this.leaves = data.leaves;
     this.events = data.events;
-    const { notes, orders, activity } = await rebuild(this.keys, this.wallet, this.leaves, this.events, this.unit);
+    if (changed) void writePoolCache(data);
+    const { notes, orders, activity } = await rebuild(this.keys, this.wallet, this.leaves, this.events, this.unit, (this.opener ??= memoOpener(this.keys.viewPriv)));
     this.notes = notes;
     this.orders = orders.map((o) => ({ ...o, symbol: this.symbol(o.asset) }));
     this.activity = activity;
