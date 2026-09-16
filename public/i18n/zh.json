@@ -1389,5 +1389,6 @@
  "· limit {0} USD": " · 限价 {0} USD",
  "buy": "买入",
  "sell": "卖出",
- "Both orders are sealed automatically in the agreed window, through the relayer, so keep this tab open until then. Have a spare ETH note for the relayer fee ready first (Sealed order offers to prepare one), and for a sell, the tokens.": "双方订单会在议定的窗口中通过中继器自动密封，因此在此之前请保持此标签页打开。请先准备好一张用于支付中继费的备用 ETH 票据（密封订单表单会提示准备），卖出方还需备好代币。"
+ "Both orders are sealed automatically in the agreed window, through the relayer, so keep this tab open until then. Have a spare ETH note for the relayer fee ready first (Sealed order offers to prepare one), and for a sell, the tokens.": "双方订单会在议定的窗口中通过中继器自动密封，因此在此之前请保持此标签页打开。请先准备好一张用于支付中继费的备用 ETH 票据（密封订单表单会提示准备），卖出方还需备好代币。",
+ "DarkpoolFi on GitHub": "DarkpoolFi 的 GitHub"
 }
