@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/funding",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/tick",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/pool",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/backstop-rebalance",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

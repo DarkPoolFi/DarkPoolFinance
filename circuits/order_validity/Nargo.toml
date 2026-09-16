@@ -1,0 +1,7 @@
+[package]
+name = "order_validity"
+type = "bin"
+authors = ["DarkpoolFi"]
+
+[dependencies]
+darkpool = { path = "../lib" }

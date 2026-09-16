@@ -1,0 +1,7 @@
+[package]
+name = "transact"
+type = "bin"
+authors = ["DarkpoolFi"]
+
+[dependencies]
+darkpool = { path = "../lib" }

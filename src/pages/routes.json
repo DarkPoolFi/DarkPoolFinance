@@ -1,0 +1,52 @@
+{
+  "/404/": {
+    "file": "404.html",
+    "title": "Page not found \u2014 DarkpoolFi",
+    "description": ""
+  },
+  "/about/": {
+    "file": "about.html",
+    "title": "About \u2014 DarkpoolFi",
+    "description": "Meet DarkpoolFi: sealed stock execution, private USDG balances, and one shared crossing window on Robinhood Chain."
+  },
+  "/dashboard/": {
+    "file": "dashboard.html",
+    "title": "Dashboard \u2014 DarkpoolFi",
+    "description": "Private USDG funding and sealed stock execution on Robinhood Chain. Interactive preview."
+  },
+  "/execution/": {
+    "file": "execution.html",
+    "title": "Execution \u2014 DarkpoolFi",
+    "description": "Understand DarkpoolFi\u2019s fixed crosses, optional limits, wait-or-cancel policies, and full, partial, unfilled, or skipped outcomes."
+  },
+  "/how-it-works/": {
+    "file": "how-it-works.html",
+    "title": "How it works \u2014 DarkpoolFi",
+    "description": "Fund with USDG, place a sealed stock order, cross at one reference price, and withdraw through DarkpoolFi on Robinhood Chain."
+  },
+  "/": {
+    "file": "home.html",
+    "title": "Privacy in every order \u2014 DarkpoolFi",
+    "description": "DarkpoolFi brings sealed stock orders, shared crossing windows and private USDG funding to Robinhood Chain."
+  },
+  "/legal/privacy-policy/": {
+    "file": "legal-privacy-policy.html",
+    "title": "Privacy Policy \u2014 DarkpoolFi",
+    "description": "DarkpoolFi preview privacy policy."
+  },
+  "/legal/risk-disclosure/": {
+    "file": "legal-risk-disclosure.html",
+    "title": "Risk Disclosure \u2014 DarkpoolFi",
+    "description": "DarkpoolFi preview risk disclosure."
+  },
+  "/legal/terms-of-service/": {
+    "file": "legal-terms-of-service.html",
+    "title": "Terms of Service \u2014 DarkpoolFi",
+    "description": "DarkpoolFi preview terms of service."
+  },
+  "/transparency/": {
+    "file": "transparency.html",
+    "title": "Transparency \u2014 DarkpoolFi",
+    "description": "DarkpoolFi\u2019s privacy boundaries, screened deposits, delayed tape, execution limits, and Robinhood Chain context."
+  }
+}

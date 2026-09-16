@@ -1,0 +1,7 @@
+[package]
+name = "darkpool"
+type = "lib"
+authors = ["DarkpoolFi"]
+
+[dependencies]
+poseidon = { tag = "v0.3.0", git = "https://github.com/noir-lang/poseidon" }

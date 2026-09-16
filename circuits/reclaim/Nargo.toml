@@ -1,0 +1,7 @@
+[package]
+name = "reclaim"
+type = "bin"
+authors = ["DarkpoolFi"]
+
+[dependencies]
+darkpool = { path = "../lib" }

@@ -1,0 +1,2 @@
+[workspace]
+members = ["lib", "batch_cross", "tree_update", "deposit", "order_validity", "reclaim", "transact"]

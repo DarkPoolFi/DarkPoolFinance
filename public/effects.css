@@ -1,0 +1,36 @@
+/* The grid stays inside the existing section; it never participates in layout. */
+.intro{position:relative;isolation:isolate;overflow:hidden}
+.intro>.privacy-grid{position:absolute;inset:0;width:100%;height:100%;z-index:-2;pointer-events:none;opacity:.92;mask-image:linear-gradient(transparent,#000 13%,#000 85%,transparent)}
+.intro::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 50% 42%,#e2caf34d 0%,transparent 67%)}
+.ink-trail{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:90;contain:strict}
+/* An editorial redaction sheet: private intent is sealed, then the page is revealed. */
+.arrival[hidden]{display:none!important}
+.arrival{position:fixed;inset:0;z-index:10000;color:#24172e;pointer-events:none;overflow:hidden;isolation:isolate;animation:arrivalFailsafe .5s 3.6s forwards}
+.arrival-paper{position:absolute;inset:0;background:#e4d3f0;display:flex;flex-direction:column;padding:32px 5vw 27px;transition:transform .8s cubic-bezier(.76,0,.24,1);will-change:transform}
+.arrival-masthead{display:flex;justify-content:space-between;align-items:center;gap:25px;font-size:9px;letter-spacing:.13em;color:#80698f}
+.arrival-brand{display:flex;align-items:center;gap:11px;font-size:23px;letter-spacing:-.7px;color:#24172e}
+.arrival-brand img{width:25px;height:29px;object-fit:contain}
+.arrival-composition{margin:auto 0;position:relative;width:min(100%,1040px);padding:30px 0}
+.arrival-kicker{font-size:9px;letter-spacing:.15em;color:#80698f;margin:0 0 28px 4px}
+.arrival-statement{font-size:clamp(64px,9vw,144px);line-height:.98;letter-spacing:-.055em;font-weight:400;display:flex;flex-direction:column;align-items:flex-start}
+.arrival-statement>span{display:block;position:relative;white-space:nowrap;padding:0 9px 12px 0;animation:arrivalType .8s cubic-bezier(.2,.75,.2,1) both}
+.arrival-statement>span:nth-child(2){animation-delay:.07s}.arrival-statement>span:nth-child(3){animation-delay:.14s}
+.arrival-redaction{position:absolute;inset:0 -18px -5px -3px;background:#24172e;color:#e4d3f0;display:flex;align-items:center;justify-content:space-between;padding:0 27px;transform-origin:left;animation:arrivalSeal 1.15s .25s cubic-bezier(.76,0,.24,1) both;overflow:hidden}
+.arrival-redaction i{font-style:normal;font-size:11px;letter-spacing:.28em;color:#b4d5e5;animation:arrivalStamp .4s .98s both}
+.arrival-redaction b{font-size:33px;font-weight:400;color:#b4d5e5;animation:arrivalStamp .4s 1.08s both}
+.arrival-caption{position:absolute;left:min(72vw,840px);bottom:38px;display:flex;gap:17px;align-items:flex-start;color:#80698f;animation:arrivalStamp .7s .4s both}
+.arrival-caption-rule{width:34px;height:1px;flex-shrink:0;background:#9c7eb0;margin-top:7px}
+.arrival-caption p{font-size:12px;line-height:1.65;margin:0;white-space:nowrap}
+.arrival-colophon{display:flex;justify-content:space-between;gap:24px;border-top:1px solid #b89dca55;padding-top:17px;font-size:9px;letter-spacing:.12em;color:#80698f}
+.arrival-ready .arrival-paper{transform:translateY(-101%)}
+@keyframes arrivalType{from{opacity:0;translate:0 18px}to{opacity:1;translate:0 0}}
+@keyframes arrivalSeal{0%,12%{transform:scaleX(0)}100%{transform:scaleX(1)}}
+@keyframes arrivalStamp{from{opacity:0}to{opacity:1}}
+@keyframes arrivalFailsafe{to{opacity:0;visibility:hidden}}
+@media(max-width:700px){.arrival-paper{padding:26px 24px 23px}.arrival-brand{font-size:21px}.arrival-brand img{width:23px;height:27px}.arrival-masthead{font-size:8px}.arrival-statement{font-size:clamp(50px,12.2vw,85px);line-height:1.04;letter-spacing:-.055em}.arrival-statement>span{padding-bottom:12px}.arrival-redaction{right:-10px;padding:0 18px}.arrival-redaction i{font-size:9px}.arrival-redaction b{font-size:25px}.arrival-kicker{font-size:7px;letter-spacing:.12em;margin-bottom:27px}.arrival-caption{position:static;margin:35px 0 0 3px;gap:13px}.arrival-caption p{font-size:11px}.arrival-caption-rule{width:26px}.arrival-colophon{font-size:7px;letter-spacing:.08em;gap:12px}.intro>.privacy-grid{opacity:.7}}
+@media(max-height:550px) and (min-width:701px){.arrival-paper{padding-top:20px;padding-bottom:17px}.arrival-statement{font-size:15vh}.arrival-composition{padding:15px 0}.arrival-kicker{margin-bottom:15px}.arrival-colophon{padding-top:12px}}
+@media(prefers-reduced-motion:reduce){.arrival,.ink-trail,.privacy-grid{display:none}.arrival *{animation:none!important;transition:none!important}}
+@media(hover:none) and (pointer:coarse){.ink-trail{display:none}}
+
+.arrival-pending main .heading-word,.arrival-pending main .heading-word::after{animation-play-state:paused!important}
+@media(max-width:600px){.intro::after{background:radial-gradient(ellipse at 50% 42%,#e2caf391 0%,#e2caf340 38%,transparent 80%)}}

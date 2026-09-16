@@ -1,0 +1,7 @@
+[package]
+name = "batch_cross"
+type = "bin"
+authors = ["DarkpoolFi"]
+
+[dependencies]
+darkpool = { path = "../lib" }
