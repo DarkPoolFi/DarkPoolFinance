@@ -1,4 +1,4 @@
-// @lovable.dev/vite-tanstack-config already includes the following — do NOT add them manually
+// The TanStack Start config preset already includes the following — do NOT add them manually
 // or the app will break with duplicate plugins:
 //   - TanStack devtools (dev-only, first), tanstackStart, viteReact, tailwindcss, tsConfigPaths,
 //     nitro (build-only using cloudflare as a default target), VITE_* env injection, @ path alias,
