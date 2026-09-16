@@ -165,10 +165,11 @@ function orderRow(o, now) {
 function tickCountdowns() {
   const now = Date.now() / 1000;
   for (const o of lastOrders) {
-    const el = document.querySelector(`[data-countdown="${CSS.escape(o.id)}"]`);
-    if (!el) continue;
+    // the same order can be on screen twice: the Shielded pool tab and the Trading desk's open orders
+    const els = document.querySelectorAll(`[data-countdown="${CSS.escape(o.id)}"]`);
+    if (!els.length) continue;
     const stage = orderStage(o, now, orderTiming.windowSeconds, orderTiming.settleDeadlineSeconds);
-    el.textContent = stage.countdown === null ? '' : clock(stage.countdown);
+    for (const el of els) el.textContent = stage.countdown === null ? '' : clock(stage.countdown);
   }
 }
 setInterval(tickCountdowns, 1000);
@@ -277,6 +278,11 @@ async function act(fn) {
 window.darkpoolShielded = {
   unlocked: () => Boolean(account),
   orderFeeEth: () => account?.view().relayFees.orderEth ?? null,
+  /** Where an order stands now, for the Trading desk's open orders: the same stages and countdown as this tab. */
+  lifecycle(o) {
+    const stage = orderStage(o, Date.now() / 1000, orderTiming.windowSeconds, orderTiming.settleDeadlineSeconds);
+    return { steps: STEPS, step: stage.step, detail: stage.detail, countdown: stage.countdown === null ? '' : clock(stage.countdown) };
+  },
   async prepareFeeNote(lockWei, progress) {
     if (!account) throw Error('Unlock your shielded account in the Shielded pool tab first.');
     if (busy) throw Error('Another shielded action is still running. Wait for it to finish.');
