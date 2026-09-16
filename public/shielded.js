@@ -412,6 +412,49 @@ const VAULT_ABI = {
 };
 let backstop = null;
 let myShares = {}; // symbol -> shares this wallet holds, read from the vault
+let myLp = null; // the connected wallet, lowercase, when there is one
+let history = null; // /api/backstop/history: every book's deposits, withdrawals and spread income (public)
+
+/**
+ * One LP's result in one book, replayed from the public history (TU-29). Pure; amounts in wei as BigInt.
+ * Deposits and withdrawals are valued as the vault valued them (ETH + tokens × tokenUsd ÷ ethUsd at the time). Spread
+ * income from each settled window is credited in proportion to the LP's shares at that moment. PnL = value now +
+ * everything withdrawn − everything deposited, so it includes spread income, price moves and rebalancing.
+ */
+function lpEarnings(book, lp, sharesNow, totalSharesNow, valueWeiNow) {
+  const me = String(lp).toLowerCase();
+  const timeline = [...book.events.map((e) => ({ ...e, fee: false })), ...book.fees.map((f) => ({ ...f, fee: true }))].sort((a, b) => a.block - b.block || Number(a.fee) - Number(b.fee));
+  let total = 0n;
+  let mine = 0n;
+  let deposited = 0n;
+  let withdrawn = 0n;
+  let fees = 0n;
+  let unpriced = false;
+  const worth = (e) => {
+    const tokens = BigInt(e.tokens);
+    if (tokens === 0n) return BigInt(e.eth);
+    if (!e.tokenUsd || !e.ethUsd || BigInt(e.ethUsd) === 0n) {
+      unpriced = true;
+      return BigInt(e.eth);
+    }
+    return BigInt(e.eth) + (tokens * BigInt(e.tokenUsd)) / BigInt(e.ethUsd);
+  };
+  for (const x of timeline) {
+    if (x.fee) {
+      if (total > 0n && mine > 0n) fees += (BigInt(x.incomeWei) * mine) / total;
+      continue;
+    }
+    const shares = x.kind === 'deposit' ? BigInt(x.shares) : -BigInt(x.shares);
+    total += shares;
+    if (x.lp !== me) continue;
+    mine += shares;
+    if (x.kind === 'deposit') deposited += worth(x);
+    else withdrawn += worth(x);
+  }
+  const value = valueWeiNow === null || totalSharesNow === 0n ? null : (valueWeiNow * sharesNow) / totalSharesNow;
+  return { deposited, withdrawn, value, pnl: value === null ? null : value + withdrawn - deposited, fees, unpriced, involved: deposited > 0n || withdrawn > 0n };
+}
+const signedEth = (wei) => `${wei > 0n ? '+' : wei < 0n ? '−' : ''}${shown(wei < 0n ? -wei : wei)}`;
 const word = (hex) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
 const units = (text, decimals = 18) => {
   const m = String(text ?? '').trim().match(new RegExp('^(\\d+)(?:\\.(\\d{0,' + decimals + '}))?$'));
@@ -426,21 +469,25 @@ const exact = (v) => {
 };
 
 async function loadBackstop() {
-  const body = await fetch('/api/backstop').then((r) => r.json()).catch(() => null);
+  const [body, past] = await Promise.all([
+    fetch('/api/backstop').then((r) => r.json()).catch(() => null),
+    fetch('/api/backstop/history').then((r) => r.json()).catch(() => null),
+  ]);
   backstop = body?.ok ? body.data : null;
+  history = past?.ok ? past.data : null;
   $('#sp-backstop').hidden = !backstop?.vault;
   if (!backstop?.vault) return;
   fill($('#sp-backstop-market'), backstop.books.map((b) => b.symbol));
   await loadMyShares();
   $('#sp-backstop-books').innerHTML =
-    '<table class="sp-table"><thead><tr><th>Market</th><th>Spread</th><th>ETH</th><th>Tokens</th><th>Value · ETH</th><th>Next window offer</th><th>Your shares</th><th>Your share of the book</th></tr></thead><tbody>' +
+    '<table class="sp-table"><thead><tr><th>Market</th><th>Spread</th><th>ETH</th><th>Tokens</th><th>Value · ETH</th><th>Next window offer</th><th>Spread earned · ETH</th><th>Your shares</th><th>Your share of the book</th></tr></thead><tbody>' +
     backstop.books
       .map((b) => {
         const mine = myShares[b.symbol] ?? 0n;
         const total = BigInt(b.shares || 0);
         // Same arithmetic the vault uses to pay a withdrawal: your fraction of the book's ETH and tokens.
         const part = (amount) => shown((BigInt(amount) * mine) / total);
-        return `<tr><td>${esc(b.symbol)}${b.enabled ? '' : ' · paused'}</td><td>${esc(b.spreadBps)} bps</td><td>${esc(shown(b.ethWei))}</td><td>${esc(shown(b.tokens))}</td><td>${b.valueWei === null ? 'price stale' : esc(shown(b.valueWei))}</td><td>${esc((Number(b.offer.qtyMicro) / 1e6).toFixed(3))} tokens · ${esc((Number(b.offer.ethMicro) / 1e6).toFixed(4))} ETH</td><td>${mine > 0n ? esc(shown(mine)) : '—'}</td><td>${mine > 0n && total > 0n ? `${esc(part(b.ethWei))} ETH · ${esc(part(b.tokens))} tokens` : '—'}</td></tr>`;
+        return `<tr><td>${esc(b.symbol)}${b.enabled ? '' : ' · paused'}</td><td>${esc(b.spreadBps)} bps</td><td>${esc(shown(b.ethWei))}</td><td>${esc(shown(b.tokens))}</td><td>${b.valueWei === null ? 'price stale' : esc(shown(b.valueWei))}</td><td>${esc((Number(b.offer.qtyMicro) / 1e6).toFixed(3))} tokens · ${esc((Number(b.offer.ethMicro) / 1e6).toFixed(4))} ETH</td><td>${esc(earnedBy(b.symbol))}</td><td>${mine > 0n ? esc(shown(mine)) : '—'}</td><td>${mine > 0n && total > 0n ? `${esc(part(b.ethWei))} ETH · ${esc(part(b.tokens))} tokens` : '—'}</td></tr>`;
       })
       .join('') +
     '</tbody></table>';
@@ -453,6 +500,7 @@ async function loadMyShares() {
   const eth = window.darkpoolMetaMask?.();
   if (!eth || !backstop?.vault) return;
   const [from] = (await eth.request({ method: 'eth_accounts' }).catch(() => [])) ?? [];
+  myLp = from ? String(from).toLowerCase() : null;
   if (!from) return;
   for (const b of backstop.books) {
     const hex = await eth
@@ -467,14 +515,41 @@ function updateMyShareNote() {
   if (!el) return;
   const symbol = $('#sp-backstop-market').value;
   const mine = myShares[symbol] ?? 0n;
-  if (mine <= 0n) {
+  const earned = myEarnings(symbol, mine);
+  if (mine <= 0n && !earned?.involved) {
     el.textContent = 'You hold no shares in this market yet.';
     return;
   }
-  el.innerHTML = `Your shares here: <strong>${esc(shown(mine))}</strong>. <button type="button" class="text-action" id="sp-backstop-all">Withdraw all</button>`;
-  $('#sp-backstop-all').addEventListener('click', () => {
+  el.innerHTML =
+    (mine > 0n ? `Your shares here: <strong>${esc(shown(mine))}</strong>. <button type="button" class="text-action" id="sp-backstop-all">Withdraw all</button>` : 'You have withdrawn all your shares here.') +
+    (earned ? `<span class="sp-lp-earnings">${earningsLine(earned)}</span>` : '');
+  $('#sp-backstop-all')?.addEventListener('click', () => {
     $('#sp-backstop-shares').value = exact(mine);
   });
+}
+
+/** Spread the whole book has earned, for the books table. */
+function earnedBy(symbol) {
+  const h = history?.books?.find((b) => b.symbol === symbol);
+  return h ? shown(BigInt(h.feesWei)) : '—';
+}
+
+function myEarnings(symbol, mine) {
+  const book = backstop?.books.find((b) => b.symbol === symbol);
+  const h = history?.books?.find((b) => b.symbol === symbol);
+  if (!myLp || !book || !h) return null;
+  return lpEarnings(h, myLp, mine, BigInt(book.shares || 0), book.valueWei === null ? null : BigInt(book.valueWei));
+}
+
+function earningsLine(e) {
+  const parts = [
+    `Deposited <strong>${esc(shown(e.deposited))}</strong> ETH`,
+    `Withdrawn <strong>${esc(shown(e.withdrawn))}</strong> ETH`,
+    e.value === null ? 'Value now unavailable (price stale)' : `Value now <strong>${esc(shown(e.value))}</strong> ETH`,
+    e.pnl === null ? '' : `PnL <strong data-sign="${e.pnl > 0n ? 1 : e.pnl < 0n ? -1 : 0}">${esc(signedEth(e.pnl))}</strong> ETH`,
+    `Spread earned <strong>${esc(shown(e.fees))}</strong> ETH`,
+  ].filter(Boolean);
+  return parts.join(' · ') + (e.unpriced ? '<br>Some token deposits could not be priced, so they count at their ETH part only.' : '');
 }
 
 async function sendFromWallet(to, data, value = 0n) {

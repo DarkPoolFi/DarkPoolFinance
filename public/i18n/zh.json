@@ -1390,5 +1390,13 @@
  "buy": "买入",
  "sell": "卖出",
  "Both orders are sealed automatically in the agreed window, through the relayer, so keep this tab open until then. Have a spare ETH note for the relayer fee ready first (Sealed order offers to prepare one), and for a sell, the tokens.": "双方订单会在议定的窗口中通过中继器自动密封，因此在此之前请保持此标签页打开。请先准备好一张用于支付中继费的备用 ETH 票据（密封订单表单会提示准备），卖出方还需备好代币。",
- "DarkpoolFi on GitHub": "DarkpoolFi 的 GitHub"
+ "DarkpoolFi on GitHub": "DarkpoolFi 的 GitHub",
+ "PnL": "盈亏",
+ "Spread earned": "价差收入",
+ "Spread earned · ETH": "价差收入 · ETH",
+ "Value now": "当前价值",
+ "Value now unavailable (price stale)": "当前价值暂不可用（价格过时）",
+ "Withdrawn": "已提取",
+ "You have withdrawn all your shares here.": "你已提取在此处的全部份额。",
+ "Some token deposits could not be priced, so they count at their ETH part only.": "部分代币存入无法定价，因此只按其 ETH 部分计算。"
 }

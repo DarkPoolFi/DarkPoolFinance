@@ -35,6 +35,7 @@ import { Route as LegalTermsOfServiceRouteImport } from './routes/legal/terms-of
 import { Route as ApiAuthNonceRouteImport } from './routes/api/auth/nonce'
 import { Route as ApiAuthSessionRouteImport } from './routes/api/auth/session'
 import { Route as ApiAuthVerifyRouteImport } from './routes/api/auth/verify'
+import { Route as ApiBackstopHistoryRouteImport } from './routes/api/backstop_.history'
 import { Route as ApiCronBackstopRebalanceRouteImport } from './routes/api/cron/backstop-rebalance'
 import { Route as ApiCronFundingRouteImport } from './routes/api/cron/funding'
 import { Route as ApiCronPoolRouteImport } from './routes/api/cron/pool'
@@ -175,6 +176,11 @@ const ApiAuthVerifyRoute = ApiAuthVerifyRouteImport.update({
   path: '/api/auth/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBackstopHistoryRoute = ApiBackstopHistoryRouteImport.update({
+  id: '/api/backstop_/history',
+  path: '/api/backstop/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronBackstopRebalanceRoute =
   ApiCronBackstopRebalanceRouteImport.update({
     id: '/api/cron/backstop-rebalance',
@@ -249,6 +255,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/nonce': typeof ApiAuthNonceRoute
   '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/verify': typeof ApiAuthVerifyRoute
+  '/api/backstop/history': typeof ApiBackstopHistoryRoute
   '/api/cron/backstop-rebalance': typeof ApiCronBackstopRebalanceRoute
   '/api/cron/funding': typeof ApiCronFundingRoute
   '/api/cron/pool': typeof ApiCronPoolRoute
@@ -286,6 +293,7 @@ export interface FileRoutesByTo {
   '/api/auth/nonce': typeof ApiAuthNonceRoute
   '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/verify': typeof ApiAuthVerifyRoute
+  '/api/backstop/history': typeof ApiBackstopHistoryRoute
   '/api/cron/backstop-rebalance': typeof ApiCronBackstopRebalanceRoute
   '/api/cron/funding': typeof ApiCronFundingRoute
   '/api/cron/pool': typeof ApiCronPoolRoute
@@ -324,6 +332,7 @@ export interface FileRoutesById {
   '/api/auth/nonce': typeof ApiAuthNonceRoute
   '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/verify': typeof ApiAuthVerifyRoute
+  '/api/backstop_/history': typeof ApiBackstopHistoryRoute
   '/api/cron/backstop-rebalance': typeof ApiCronBackstopRebalanceRoute
   '/api/cron/funding': typeof ApiCronFundingRoute
   '/api/cron/pool': typeof ApiCronPoolRoute
@@ -363,6 +372,7 @@ export interface FileRouteTypes {
     | '/api/auth/nonce'
     | '/api/auth/session'
     | '/api/auth/verify'
+    | '/api/backstop/history'
     | '/api/cron/backstop-rebalance'
     | '/api/cron/funding'
     | '/api/cron/pool'
@@ -400,6 +410,7 @@ export interface FileRouteTypes {
     | '/api/auth/nonce'
     | '/api/auth/session'
     | '/api/auth/verify'
+    | '/api/backstop/history'
     | '/api/cron/backstop-rebalance'
     | '/api/cron/funding'
     | '/api/cron/pool'
@@ -437,6 +448,7 @@ export interface FileRouteTypes {
     | '/api/auth/nonce'
     | '/api/auth/session'
     | '/api/auth/verify'
+    | '/api/backstop_/history'
     | '/api/cron/backstop-rebalance'
     | '/api/cron/funding'
     | '/api/cron/pool'
@@ -475,6 +487,7 @@ export interface RootRouteChildren {
   ApiAuthNonceRoute: typeof ApiAuthNonceRoute
   ApiAuthSessionRoute: typeof ApiAuthSessionRoute
   ApiAuthVerifyRoute: typeof ApiAuthVerifyRoute
+  ApiBackstopHistoryRoute: typeof ApiBackstopHistoryRoute
   ApiCronBackstopRebalanceRoute: typeof ApiCronBackstopRebalanceRoute
   ApiCronFundingRoute: typeof ApiCronFundingRoute
   ApiCronPoolRoute: typeof ApiCronPoolRoute
@@ -670,6 +683,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthVerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/backstop_/history': {
+      id: '/api/backstop_/history'
+      path: '/api/backstop/history'
+      fullPath: '/api/backstop/history'
+      preLoaderRoute: typeof ApiBackstopHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/backstop-rebalance': {
       id: '/api/cron/backstop-rebalance'
       path: '/api/cron/backstop-rebalance'
@@ -763,6 +783,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthNonceRoute: ApiAuthNonceRoute,
   ApiAuthSessionRoute: ApiAuthSessionRoute,
   ApiAuthVerifyRoute: ApiAuthVerifyRoute,
+  ApiBackstopHistoryRoute: ApiBackstopHistoryRoute,
   ApiCronBackstopRebalanceRoute: ApiCronBackstopRebalanceRoute,
   ApiCronFundingRoute: ApiCronFundingRoute,
   ApiCronPoolRoute: ApiCronPoolRoute,
