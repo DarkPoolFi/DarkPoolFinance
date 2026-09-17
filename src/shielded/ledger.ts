@@ -73,11 +73,14 @@ export interface OrderMemo {
   feeLabel?: string;
 }
 
-/** A transaction's memo: the label, the spent notes' commitments and [amount, blinding] per output. */
+/** A transaction's memo: the label, the spent notes' commitments and [amount, blinding] per output. A transfer seals
+ * two of these — the sender's, which lists what it spent and both outputs, and the recipient's, which carries only
+ * their own note. Which one opened therefore says which side of the transfer this account is on. */
 export interface TransactMemo {
   label: string;
   ins: string[];
   outs: [string, string][];
+  kind?: "transfer";
 }
 
 // Changing this list must also change CACHE_KEY in client.ts, or cached snapshots keep missing the new events.
@@ -219,19 +222,25 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
       }
       deposits++;
     } else if (e.name === "Transacted") {
-      const text = a["memo"] && a["memo"] !== "0x" ? await read(a["memo"]) : null;
+      const text = await readTransact(read, a["memo"]);
       if (!text) continue; // not ours
       const memo = JSON.parse(text) as TransactMemo;
+      const sent = memo.kind === "transfer" && memo.ins.length > 0; // the sender's copy of a transfer; the recipient's has no inputs
       spend(a["nullifier0"], memo.ins[0]);
       spend(a["nullifier1"], memo.ins[1]);
       for (const [amount, blinding] of memo.outs) {
-        if (BigInt(amount) > 0n) add(BigInt(a["asset"]), BigInt(amount), BigInt(blinding), BigInt(memo.label), "Transaction output");
+        // a transfer's first output belongs to the other side, so its commitment never matches a leaf here and add() drops it
+        if (BigInt(amount) > 0n) add(BigInt(a["asset"]), BigInt(amount), BigInt(blinding), BigInt(memo.label), memo.kind === "transfer" && !sent ? "Received" : "Transaction output");
       }
       const released = BigInt(a["released"] ?? 0);
       const relayed = BigInt(a["fee"] ?? 0) > 0n ? " Sent through the relayer." : "";
       const outs = memo.outs.filter(([amount]) => BigInt(amount) > 0n).length;
       const fee = BigInt(a["asset"]) === ETH && BigInt(a["fee"] ?? 0) > 0n ? { feeWei: BigInt(a["fee"]) } : {}; // the relayer takes ETH only
-      if (released > 0n) log(e, "Withdrawal", `Released to ${getAddress(a["to"])}.${relayed}`, BigInt(a["asset"]), released, fee);
+      if (memo.kind === "transfer") {
+        const amount = BigInt(memo.outs[0]?.[0] ?? 0);
+        if (sent) log(e, "Sent", `Paid to a shielded address. Nothing on chain says who received it.${relayed}`, BigInt(a["asset"]), amount, fee);
+        else log(e, "Received", "Paid into your account from a shielded address.", BigInt(a["asset"]), amount);
+      } else if (released > 0n) log(e, "Withdrawal", `Released to ${getAddress(a["to"])}.${relayed}`, BigInt(a["asset"]), released, fee);
       else log(e, "Notes", `${memo.ins.length > 1 ? "Two notes merged into one" : `One note split into ${outs}`}.${relayed}`, BigInt(a["asset"]), null, fee);
     } else if (e.name === "OrderResting") {
       const key = `${a["asset"]}:${a["epoch"]}`;
@@ -302,6 +311,24 @@ function parseList(notesHex: string): string[] {
     return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * A transaction's memo: one sealed blob, or — for a transfer — an envelope holding one for each side. Returns the first
+ * part this account can open, so the same code reads a transfer from either end and nothing from someone else's.
+ */
+async function readTransact(read: Opener, memoHex: string | undefined): Promise<string | null> {
+  if (!memoHex || memoHex === "0x") return null;
+  try {
+    const envelope = JSON.parse(toUtf8String(memoHex)) as { s?: unknown; r?: unknown };
+    for (const part of [envelope.s, envelope.r]) {
+      const text = typeof part === "string" ? await read(part) : null;
+      if (text) return text;
+    }
+    return null;
+  } catch {
+    return read(memoHex); // a plain sealed memo: every transaction before transfers existed
   }
 }
 

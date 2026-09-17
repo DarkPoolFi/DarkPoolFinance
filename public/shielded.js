@@ -193,6 +193,10 @@ function render() {
   fill($('#sp-deposit-asset'), ['ETH', ...v.markets]);
   fill($('#sp-withdraw-asset'), ['ETH', ...v.markets]);
   fill($('#sp-notes-asset'), ['ETH', ...v.markets]);
+  fill($('#sp-send-asset'), ['ETH', ...v.markets]);
+  fill($('#sp-dca-market'), v.markets);
+  renderDca();
+  $('#sp-address').textContent = v.shieldedAddress;
   fill($('#sp-order-market'), v.markets);
   showBand().catch(() => {});
   const waiting = v.tree.queued - v.tree.size;
@@ -355,6 +359,7 @@ $('#sp-unlock').addEventListener('click', () =>
     account = await client.ShieldedAccount.open(window.darkpoolMetaMask());
     $('#sp-withdraw-to').value = account.wallet;
     rfqStart(client);
+    dcaStart();
     say('Shielded account unlocked. Balances are rebuilt from the pool’s public history with your keys.');
     setInterval(() => {
       if (!busy && account) account.sync().then(render).catch(() => {});
@@ -378,6 +383,23 @@ $('#sp-withdraw').addEventListener('submit', (e) => {
     $('#sp-withdraw-amount').value = '';
     say(`Withdrawal sent (${short(tx)}). Any change returns as a new note with the next tree batch.`);
   });
+});
+
+$('#sp-send').addEventListener('submit', (e) => {
+  e.preventDefault();
+  act(async () => {
+    const tx = await account.transfer($('#sp-send-asset').value, $('#sp-send-amount').value, $('#sp-send-to').value, $('#sp-send-self').checked, say);
+    $('#sp-send-amount').value = '';
+    $('#sp-send-to').value = '';
+    say(`Sent (${short(tx)}). It lands in their account with the next tree batch, usually within a couple of minutes.`);
+  });
+});
+
+$('#sp-address-copy').addEventListener('click', () => {
+  navigator.clipboard
+    ?.writeText(account?.view().shieldedAddress ?? '')
+    .then(() => say('Shielded address copied. Anyone with it can pay you; nobody with it can spend.', 'info'))
+    .catch(() => {});
 });
 
 $('#sp-merge').addEventListener('click', () =>
@@ -653,6 +675,202 @@ $('#sp-orders').addEventListener('click', (e) => {
     const tx = await account.reclaim(id, say);
     say(`Lock reclaimed (${short(tx)}). The refund note arrives with the next tree batch.`);
   });
+});
+
+// --- Recurring private buys: a plan seals one ordinary order per round, so nothing on chain ties the rounds
+// together. The plan itself never leaves this browser; it is a schedule, not an instruction anyone else can act on. ---
+const DCA_MAX_ROUNDS = 365;
+
+/** The token size a round's spend buys at the current reference, to 6 decimals. Pure; null when a price is missing. */
+function dcaSize(spendEth, refUsd, ethUsd) {
+  const spend = Number(spendEth);
+  const ref = Number(refUsd) / 1e6;
+  const eth = Number(ethUsd) / 1e6;
+  if (!(spend > 0) || !(ref > 0) || !(eth > 0)) return null;
+  const size = (spend * eth) / ref;
+  return size >= 0.001 ? size.toFixed(6) : null; // below the venue's minimum order size there is nothing to place
+}
+
+/** A wait in words: a day's plan should not count down in minutes. Pure. */
+function dcaWait(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+
+/** How often a plan buys, in words. Pure. */
+const dcaEvery = (seconds) => ({ 300: 'window (5 minutes)', 900: '15 minutes', 3600: 'hour', 21600: '6 hours', 86400: 'day' })[seconds] ?? dcaWait(seconds);
+
+/** Is a plan's next round due? Pure. */
+const dcaDue = (plan, now) => plan.status === 'on' && plan.left > 0 && now >= plan.next;
+
+/**
+ * A plan after one bought round. Rounds you were away for are counted and skipped, never stacked into a burst of
+ * orders on your return: the plan buys what you asked for, it just finishes later. Pure.
+ */
+function dcaAdvance(plan, now) {
+  const missed = Math.max(0, Math.floor((now - plan.next) / plan.every));
+  const left = plan.left - 1;
+  return { ...plan, left, missed: (plan.missed ?? 0) + missed, next: now + plan.every, status: left > 0 ? 'on' : 'done' };
+}
+
+const DCA_LOCK = 'darkpool_dca_lock';
+const dcaTab = `${Date.now()}.${Math.random()}`;
+
+/**
+ * Only one tab places rounds. Two tabs of the same account share one plan through storage, and without this both
+ * would buy the same round. The claim expires, so a tab that is closed mid-round does not freeze the plan forever.
+ */
+function dcaClaim(now, lease = 180) {
+  try {
+    const held = JSON.parse(localStorage.getItem(DCA_LOCK) ?? 'null');
+    if (held && held.tab !== dcaTab && held.until > now) return false;
+    localStorage.setItem(DCA_LOCK, JSON.stringify({ tab: dcaTab, until: now + lease }));
+    return true;
+  } catch {
+    return true; // no storage: no other tab can be holding a plan either
+  }
+}
+
+let dca = null; // { plans: [{ id, symbol, spendEth, every, total, left, next, limitText, status, missed, error }] }
+const dcaKey = () => `darkpool_dca_v1:${account.wallet.toLowerCase()}`;
+
+function dcaSave() {
+  try {
+    localStorage.setItem(dcaKey(), JSON.stringify(dca));
+  } catch {
+    // private mode or a full quota: the plan lives for this page only
+  }
+}
+
+/** Plans come from storage on every tick, so a second tab's progress is seen rather than overwritten. */
+function dcaLoad() {
+  try {
+    dca = JSON.parse(localStorage.getItem(dcaKey()) ?? 'null');
+  } catch {
+    dca = null;
+  }
+  if (!Array.isArray(dca?.plans)) dca = { plans: [] };
+}
+
+function dcaStart() {
+  dcaLoad();
+  renderDca();
+  setInterval(() => dcaTick().catch(() => {}), 5000);
+}
+
+async function dcaTick() {
+  if (!account || busy) return;
+  dcaLoad();
+  const now = Date.now() / 1000;
+  const plan = dca.plans.find((p) => dcaDue(p, now));
+  if (!plan) return renderDca();
+  if (!dcaClaim(now)) return renderDca(); // another tab is buying this round
+  await act(async () => {
+    try {
+      if (Date.now() - venue.at > 30_000) {
+        const body = await fetch('/api/venue').then((r) => r.json()).catch(() => null);
+        venue = { at: Date.now(), data: body?.ok ? body.data : null };
+      }
+      const a = venue.data?.assets?.find((x) => x.symbol === plan.symbol);
+      const size = dcaSize(plan.spendEth, a?.ref_usd, venue.data?.eth_usd?.usd);
+      if (!size) throw Error(`${plan.symbol} has no usable reference price right now, or this round buys less than the venue's minimum size.`);
+      const order = {
+        symbol: plan.symbol,
+        side: 'buy',
+        sizeText: size,
+        limitText: plan.limitText ?? '',
+        maxEthText: (Number(plan.spendEth) * 1.0205).toFixed(6),
+        gtc: false,
+        selfSubmit: false,
+        kind: 'standard',
+        kindText: '',
+      };
+      let tx;
+      try {
+        tx = await account.placeOrder(order, say);
+      } catch (e) {
+        if (e?.code !== 'needs-fee-note') throw e;
+        say('Preparing an ETH note for this round’s relayer fee…');
+        await account.prepareFeeNote(e.lockWei, say);
+        tx = await account.placeOrder(order, say);
+      }
+      Object.assign(plan, dcaAdvance(plan, now));
+      delete plan.error;
+      dcaSave();
+      try {
+        localStorage.removeItem(DCA_LOCK);
+      } catch {
+        // it expires on its own
+      }
+      say(`Recurring buy sealed (${short(tx)}). ${plan.left} of ${plan.total} left in this plan.`);
+    } catch (e) {
+      plan.status = 'paused'; // a round that failed must never retry every five seconds
+      plan.error = errorText(e);
+      dcaSave();
+      throw e;
+    }
+  });
+}
+
+function renderDca() {
+  const el = $('#sp-dca-plans');
+  if (!el) return;
+  if (!dca?.plans.length) return (el.innerHTML = '');
+  const now = Date.now() / 1000;
+  el.innerHTML = dca.plans
+    .map((p) => {
+      const when = p.status !== 'on' ? '' : ` · next in ${dcaWait(p.next - now)}`;
+      const state = p.status === 'done' ? 'Finished' : p.status === 'paused' ? 'Paused' : 'Running';
+      const missed = p.missed ? ` · ${p.missed} round${p.missed === 1 ? '' : 's'} missed while away` : '';
+      const buttons =
+        (p.status === 'done' ? '' : `<button class="text-action" type="button" data-dca="${p.status === 'on' ? 'pause' : 'resume'}" data-id="${p.id}">${p.status === 'on' ? 'Pause' : 'Resume'}</button> `) +
+        `<button class="text-action" type="button" data-dca="stop" data-id="${p.id}">Remove</button>`;
+      return `<div class="sp-order"><div><strong>${esc(p.spendEth)} ETH of ${esc(p.symbol)} · every ${dcaEvery(p.every)}</strong><small>${state} · ${p.left} of ${p.total} left${when}${missed}${p.error ? ` · ${esc(p.error)}` : ''}</small></div><div>${buttons}</div></div>`;
+    })
+    .join('');
+}
+
+$('#sp-dca-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const spend = Number($('#sp-dca-spend').value);
+  const rounds = Number($('#sp-dca-rounds').value);
+  if (!(spend > 0)) return say('Enter how much ETH each round should spend.', 'error');
+  if (!Number.isInteger(rounds) || rounds < 1 || rounds > DCA_MAX_ROUNDS) return say(`Enter how many buys to make, from 1 to ${DCA_MAX_ROUNDS}.`, 'error');
+  const every = Number($('#sp-dca-every').value);
+  dca.plans.push({
+    id: `${Date.now()}`,
+    symbol: $('#sp-dca-market').value,
+    spendEth: $('#sp-dca-spend').value.trim(),
+    every,
+    total: rounds,
+    left: rounds,
+    next: Date.now() / 1000, // the first round buys straight away
+    limitText: $('#sp-dca-limit').value.trim(),
+    status: 'on',
+    missed: 0,
+  });
+  dcaSave();
+  renderDca();
+  $('#sp-dca-spend').value = '';
+  $('#sp-dca-rounds').value = '';
+  say(`Plan started: ${rounds} buys, one every ${dcaEvery(every)}. It runs while this tab is open and unlocked.`, 'info');
+});
+
+$('#sp-dca-plans').addEventListener('click', (e) => {
+  const button = e.target.closest('[data-dca]');
+  if (!button || !dca) return;
+  const plan = dca.plans.find((p) => p.id === button.dataset.id);
+  if (!plan) return;
+  if (button.dataset.dca === 'stop') dca.plans = dca.plans.filter((p) => p !== plan);
+  else if (button.dataset.dca === 'pause') plan.status = 'paused';
+  else {
+    plan.status = 'on';
+    plan.next = Date.now() / 1000 + plan.every; // resuming waits a full round, it does not fire on the spot
+    delete plan.error;
+  }
+  dcaSave();
+  renderDca();
 });
 
 // --- RFQ block trades (TU-27): two counterparties agree a block through messages sealed to each other's RFQ code (a

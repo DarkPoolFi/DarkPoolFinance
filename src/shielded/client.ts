@@ -4,7 +4,7 @@
 // Transactions and orders go through the relayer by default, so the connected wallet is only ever linked to its own
 // deposits. Every note carries its deposit's label: withdrawals prove that label is in the published association set.
 import { AbiCoder, Interface, ZeroAddress, formatUnits, getAddress, hexlify, isHexString, keccak256, toUtf8Bytes } from "ethers";
-import { KEY_MESSAGE, keysFromSignature, seal, type ShieldedKeys } from "./crypto";
+import { KEY_MESSAGE, keysFromSignature, parseShieldedAddress, seal, shieldedAddress, type ShieldedKeys } from "./crypto";
 import { DEPOSIT_DOMAIN, loadPool, memoOpener, rebuild, type Opener, type PoolSnapshot, type Activity, type Grant, type MyOrder, type Note, type OrderMemo, type PoolEvent, type TransactMemo } from "./ledger";
 import { FEE_NOTE_ORDERS, commitmentOf, feeNoteSource, openingToJson, type OrderOpening } from "./orders";
 import { DEPTH, ETH, ETH_UNIT, FIELD, PLAIN, aspLeaf, blind, depositLabel, hex, note, nullifier, orderNullifier, pathOf, ready, rootOf, unitOf, type OrderTerms } from "./protocol";
@@ -439,8 +439,11 @@ export class ShieldedAccount {
    * One TransactProof: spend `ins` (one or two notes of `asset` with one label), create `outs` (amounts, owned by this
    * account), release `released` to `to`. ETH goes through the relayer (its fee comes out of the notes) unless
    * `selfSubmit`; tokens are always self-submitted. Releasing funds proves the label is in the association set.
+   * With `recipient`, the first output is made out to their owner key instead — a private transfer. The circuit takes
+   * each output's owner as an input and never ties it to the spender (circuits/transact/src/main.nr), so this needs no
+   * new circuit, verifier or pool; on chain a transfer is another transaction with two new commitments.
    */
-  private async transact(asset: bigint, ins: Note[], outs: bigint[], released: bigint, to: string, selfSubmit: boolean, progress: (s: string) => void) {
+  private async transact(asset: bigint, ins: Note[], outs: bigint[], released: bigint, to: string, selfSubmit: boolean, progress: (s: string) => void, recipient?: { owner: bigint; viewPub: string }) {
     const relayed = asset === ETH && !selfSubmit;
     const fee = relayed ? BigInt(this.config.relayFees.transactWei) : 0n;
     const relayer = relayed ? this.config.relayer : ZeroAddress;
@@ -458,7 +461,8 @@ export class ShieldedAccount {
     if (change < 0n) throw Error(relayed ? `Not enough in these notes to cover the relayer fee of ${formatUnits(fee, 18)} ETH.` : "Not enough in these notes.");
     outAmounts[1] = outAmounts[1]! + change; // whatever is left returns in the second output
     const outBlindings = [0n, 1n].map((k) => blind(secret, (first + 11n + k) % FIELD));
-    const outputs = outAmounts.map((amount, k) => note(owner, asset, amount, outBlindings[k]!, label));
+    const outOwners = [recipient?.owner ?? owner, owner]; // a transfer's change always comes back here
+    const outputs = outAmounts.map((amount, k) => note(outOwners[k]!, asset, amount, outBlindings[k]!, label));
     const spent = slots.map(spentOf);
 
     let asp: Awaited<ReturnType<ShieldedAccount["association"]>> = null;
@@ -478,7 +482,7 @@ export class ShieldedAccount {
       in_blindings: slots.map((i) => i.blinding),
       in_indexes: slots.map((i) => i.index),
       in_paths: slots.map((i) => (i.amount === 0n ? zeroPath() : pathOf(leaves, i.index))),
-      out_owners: [owner, owner],
+      out_owners: outOwners,
       out_amounts: outAmounts,
       out_blindings: outBlindings,
       asp_index: asp?.index ?? 0,
@@ -496,8 +500,13 @@ export class ShieldedAccount {
       label: String(label),
       ins: ins.map((n) => hex(n.commitment)),
       outs: outAmounts.map((amount, k) => [String(amount), String(outBlindings[k])]),
+      ...(recipient ? { kind: "transfer" as const } : {}),
     };
-    const sealedMemo = await seal(viewPub, JSON.stringify(memo));
+    // a transfer seals twice: the recipient is told only their own note, never what was spent or what came back
+    const theirs: TransactMemo = { label: String(label), ins: [], outs: [[String(outAmounts[0]), String(outBlindings[0])]], kind: "transfer" };
+    const sealedMemo = recipient
+      ? utf8Hex(JSON.stringify({ s: await seal(viewPub, JSON.stringify(memo)), r: await seal(recipient.viewPub, JSON.stringify(theirs)) }))
+      : await seal(viewPub, JSON.stringify(memo));
     const t = {
       root: hex(root),
       aspRoot: hex(asp?.root ?? 0n),
@@ -525,6 +534,28 @@ export class ShieldedAccount {
     if (!amount || amount <= 0n) throw Error("Enter an amount.");
     const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
     return this.transact(asset, this.cover(asset, amount + fee, 2), [], amount, getAddress(to), selfSubmit, progress);
+  }
+
+  /** This account's shielded address: what someone else needs to pay it, and nothing more. */
+  shieldedAddress() {
+    return shieldedAddress(this.keys);
+  }
+
+  /**
+   * Pay `amountText` of `symbol` to another account's shielded address. They get a note made out to their owner key
+   * with its opening sealed to their viewing key; the change comes back here. Through the relayer neither wallet
+   * appears on chain, and the transaction is indistinguishable from this account splitting a note.
+   */
+  async transfer(symbol: string, amountText: string, addressText: string, selfSubmit = false, progress: (s: string) => void = () => {}) {
+    await this.sync();
+    const to = parseShieldedAddress(addressText);
+    if (!to) throw Error("That is not a shielded address. Ask the recipient for the one in their shielded account panel; it starts with dp.");
+    if (to.owner === this.keys.owner) throw Error("That is this account's own shielded address.");
+    const asset = this.assetOf(symbol);
+    const amount = toUnits(amountText, this.decimalsOf(asset));
+    if (!amount || amount <= 0n) throw Error("Enter an amount.");
+    const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
+    return this.transact(asset, this.cover(asset, amount + fee, 2), [amount], 0n, ZeroAddress, selfSubmit, progress, to);
   }
 
   /** Merge the largest pair of spendable `symbol` notes that come from the same deposit. */
@@ -779,6 +810,8 @@ export class ShieldedAccount {
     const now = Date.now() / 1000;
     return {
       wallet: this.wallet,
+      shieldedAddress: shieldedAddress(this.keys), // shown in the account panel, for someone else to pay
+
       activity: [...this.activity].reverse().map((r) => ({
         type: r.type,
         detail: r.detail,

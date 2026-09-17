@@ -1,7 +1,7 @@
 // Keys and sealed messages for the shielded pool. The spending secret and the viewing key both derive from one wallet
 // signature, so the wallet alone recovers an account. Sealed messages are ECIES: secp256k1 ECDH (ethers) + AES-256-GCM
 // (WebCrypto, same in browsers and Node).
-import { SigningKey, concat, getBytes, hexlify, keccak256, randomBytes, sha256, toUtf8Bytes, toUtf8String } from "ethers";
+import { SigningKey, concat, decodeBase58, encodeBase58, getBytes, hexlify, keccak256, randomBytes, sha256, toBeHex, toUtf8Bytes, toUtf8String } from "ethers";
 import { FIELD, ownerPub } from "./protocol";
 
 export const KEY_MESSAGE =
@@ -22,6 +22,35 @@ export function keysFromSignature(signature: string): ShieldedKeys {
   const viewPriv = keccak256(concat([toUtf8Bytes("darkpool:view"), seed]));
   const blindKey = BigInt(keccak256(concat([toUtf8Bytes("darkpool:blind"), seed]))) % FIELD;
   return { secret, owner: ownerPub(secret), viewPriv, viewPub: new SigningKey(viewPriv).compressedPublicKey, blindKey };
+}
+
+// A shielded address is everything someone needs to pay this account and nothing else: the owner key their note is
+// made out to (32 B) and the viewing key its opening is sealed to (33 B), with a 4-byte checksum so a typo cannot send
+// funds to a note nobody can open. It says nothing about the wallet behind it, and cannot spend.
+const ADDRESS_BYTES = 32 + 33 + 4;
+const checksum = (body: string) => keccak256(body).slice(0, 10);
+
+export function shieldedAddress(keys: Pick<ShieldedKeys, "owner" | "viewPub">): string {
+  const body = concat([toBeHex(keys.owner, 32), keys.viewPub]);
+  return "dp" + encodeBase58(concat([body, checksum(body)]));
+}
+
+/** The keys inside a shielded address, or null when it is not one: mistyped, wrong checksum, or not a usable key. */
+export function parseShieldedAddress(text: string): { owner: bigint; viewPub: string } | null {
+  const t = String(text ?? "").trim();
+  if (!t.startsWith("dp")) return null;
+  try {
+    const b = getBytes(toBeHex(decodeBase58(t.slice(2)), ADDRESS_BYTES));
+    const body = hexlify(b.slice(0, 65));
+    if (checksum(body) !== hexlify(b.slice(65))) return null;
+    const owner = BigInt(hexlify(b.slice(0, 32)));
+    const viewPub = hexlify(b.slice(32, 65));
+    if (owner === 0n || owner >= FIELD) return null;
+    SigningKey.computePublicKey(viewPub, true); // throws unless it is a point on the curve
+    return { owner, viewPub };
+  } catch {
+    return null;
+  }
 }
 
 // WebCrypto's typings want ArrayBuffer-backed views; ethers returns ArrayBufferLike ones.
