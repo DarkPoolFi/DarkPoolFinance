@@ -184,7 +184,14 @@ const circuits: Record<CircuitName, () => Promise<{ default: unknown }>> = {
 async function proveCircuit(name: CircuitName, inputs: Parameters<typeof prove>[1]) {
   await initNoir();
   const circuit = (await circuits[name]()).default as CompiledCircuit;
-  return prove(circuit, inputs);
+  const started = performance.now();
+  const result = await prove(circuit, inputs);
+  // TU-35: report the duration only (no account data); never let it affect the action
+  if (typeof window !== "undefined") {
+    const body = JSON.stringify({ circuit: name, ms: Math.round(performance.now() - started), cores: navigator.hardwareConcurrency });
+    fetch("/api/pool/metrics", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+  }
+  return result;
 }
 
 export class ShieldedAccount {

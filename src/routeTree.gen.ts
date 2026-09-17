@@ -44,6 +44,7 @@ import { Route as ApiOrdersIdRouteImport } from './routes/api/orders_.$id'
 import { Route as ApiPoolAssociationRouteImport } from './routes/api/pool_.association'
 import { Route as ApiPoolEventsRouteImport } from './routes/api/pool_.events'
 import { Route as ApiPoolLeavesRouteImport } from './routes/api/pool_.leaves'
+import { Route as ApiPoolMetricsRouteImport } from './routes/api/pool_.metrics'
 import { Route as ApiPoolRelayRouteImport } from './routes/api/pool_.relay'
 
 const IndexRoute = IndexRouteImport.update({
@@ -222,6 +223,11 @@ const ApiPoolLeavesRoute = ApiPoolLeavesRouteImport.update({
   path: '/api/pool/leaves',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPoolMetricsRoute = ApiPoolMetricsRouteImport.update({
+  id: '/api/pool_/metrics',
+  path: '/api/pool/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPoolRelayRoute = ApiPoolRelayRouteImport.update({
   id: '/api/pool_/relay',
   path: '/api/pool/relay',
@@ -264,6 +270,7 @@ export interface FileRoutesByFullPath {
   '/api/pool/association': typeof ApiPoolAssociationRoute
   '/api/pool/events': typeof ApiPoolEventsRoute
   '/api/pool/leaves': typeof ApiPoolLeavesRoute
+  '/api/pool/metrics': typeof ApiPoolMetricsRoute
   '/api/pool/relay': typeof ApiPoolRelayRoute
 }
 export interface FileRoutesByTo {
@@ -302,6 +309,7 @@ export interface FileRoutesByTo {
   '/api/pool/association': typeof ApiPoolAssociationRoute
   '/api/pool/events': typeof ApiPoolEventsRoute
   '/api/pool/leaves': typeof ApiPoolLeavesRoute
+  '/api/pool/metrics': typeof ApiPoolMetricsRoute
   '/api/pool/relay': typeof ApiPoolRelayRoute
 }
 export interface FileRoutesById {
@@ -341,6 +349,7 @@ export interface FileRoutesById {
   '/api/pool_/association': typeof ApiPoolAssociationRoute
   '/api/pool_/events': typeof ApiPoolEventsRoute
   '/api/pool_/leaves': typeof ApiPoolLeavesRoute
+  '/api/pool_/metrics': typeof ApiPoolMetricsRoute
   '/api/pool_/relay': typeof ApiPoolRelayRoute
 }
 export interface FileRouteTypes {
@@ -381,6 +390,7 @@ export interface FileRouteTypes {
     | '/api/pool/association'
     | '/api/pool/events'
     | '/api/pool/leaves'
+    | '/api/pool/metrics'
     | '/api/pool/relay'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -419,6 +429,7 @@ export interface FileRouteTypes {
     | '/api/pool/association'
     | '/api/pool/events'
     | '/api/pool/leaves'
+    | '/api/pool/metrics'
     | '/api/pool/relay'
   id:
     | '__root__'
@@ -457,6 +468,7 @@ export interface FileRouteTypes {
     | '/api/pool_/association'
     | '/api/pool_/events'
     | '/api/pool_/leaves'
+    | '/api/pool_/metrics'
     | '/api/pool_/relay'
   fileRoutesById: FileRoutesById
 }
@@ -496,6 +508,7 @@ export interface RootRouteChildren {
   ApiPoolAssociationRoute: typeof ApiPoolAssociationRoute
   ApiPoolEventsRoute: typeof ApiPoolEventsRoute
   ApiPoolLeavesRoute: typeof ApiPoolLeavesRoute
+  ApiPoolMetricsRoute: typeof ApiPoolMetricsRoute
   ApiPoolRelayRoute: typeof ApiPoolRelayRoute
 }
 
@@ -746,6 +759,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPoolLeavesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/pool_/metrics': {
+      id: '/api/pool_/metrics'
+      path: '/api/pool/metrics'
+      fullPath: '/api/pool/metrics'
+      preLoaderRoute: typeof ApiPoolMetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/pool_/relay': {
       id: '/api/pool_/relay'
       path: '/api/pool/relay'
@@ -792,6 +812,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPoolAssociationRoute: ApiPoolAssociationRoute,
   ApiPoolEventsRoute: ApiPoolEventsRoute,
   ApiPoolLeavesRoute: ApiPoolLeavesRoute,
+  ApiPoolMetricsRoute: ApiPoolMetricsRoute,
   ApiPoolRelayRoute: ApiPoolRelayRoute,
 }
 export const routeTree = rootRouteImport

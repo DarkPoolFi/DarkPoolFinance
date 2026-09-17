@@ -6,6 +6,7 @@ import { fail, handle, ok } from "@/server/darkpool/http";
 import { publishAssociation } from "@/server/darkpool/pool/association";
 import { operator } from "@/server/darkpool/pool/contract";
 import { indexPool } from "@/server/darkpool/pool/indexer";
+import { settleRelays } from "@/server/darkpool/pool/relay";
 import { STUCK_AFTER_SEC, tendSends } from "@/server/darkpool/pool/sends";
 import { sweepFees } from "@/server/darkpool/pool/sweep";
 import { advancePoolTree } from "@/server/darkpool/pool/tree";
@@ -13,7 +14,7 @@ import { runPoolWindows } from "@/server/darkpool/pool/windows";
 
 const LOW_OPERATOR_WEI = 1_000_000_000_000_000n; // 0.001 ETH ≈ 3–4 tree batches or settlements
 
-// Every minute: re-broadcast or bump stuck operator sends, index the shielded pool's events, append queued commitments,
+// Every minute: re-broadcast or bump stuck operator sends, settle relay fees against gas paid, index the shielded pool's events, append queued commitments,
 // seal and settle finished windows, publish the association set, sweep settlement fees to the operator. Sends go
 // through the queue in pool/sends.ts, so steps with different work can each have a transaction in flight.
 export const Route = createFileRoute("/api/cron/pool")({
@@ -32,6 +33,7 @@ export const Route = createFileRoute("/api/cron/pool")({
               }
               return r;
             },
+            relays: settleRelays,
             index: indexPool,
             tree: advancePoolTree,
             windows: runPoolWindows,
