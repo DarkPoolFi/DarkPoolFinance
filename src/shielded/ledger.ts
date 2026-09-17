@@ -54,6 +54,8 @@ export interface Activity {
   amount: bigint | null;
   block: number;
   tx: string;
+  feeWei?: bigint; // ETH this line paid: the relayer fee of a relayed transaction or order, the settlement fee of a fill
+  priceUsd?: bigint; // fills: average price per token before fees, micro-USD (legs at the reference and at the backstop's spread)
 }
 
 /** What the owner keeps about an order inside its sealed envelope (`u`), to rebuild it and its change notes anywhere. */
@@ -78,7 +80,8 @@ export interface TransactMemo {
   outs: [string, string][];
 }
 
-export const EVENT_NAMES = ["Deposited", "Transacted", "OrderResting", "WindowSettled", "WindowAbandoned", "OrderReclaimed"];
+// Changing this list must also change CACHE_KEY in client.ts, or cached snapshots keep missing the new events.
+export const EVENT_NAMES = ["Deposited", "Transacted", "OrderResting", "OrderFeePaid", "WindowSealed", "WindowSettled", "WindowAbandoned", "OrderReclaimed"];
 
 /** The public pool data a client holds between syncs (TU-13). Only chain data: never keys or anything decrypted. */
 export interface PoolSnapshot {
@@ -160,8 +163,11 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
   const orders: MyOrder[] = [];
   const activity: Activity[] = [];
   const used = new Set<number>();
-  const log = (e: PoolEvent, type: string, detail: string, asset: bigint, amount: bigint | null) =>
-    activity.push({ type, detail, asset, amount, block: e.block, tx: e.tx_hash });
+  const log = (e: PoolEvent, type: string, detail: string, asset: bigint, amount: bigint | null, extra: Pick<Activity, "feeWei" | "priceUsd"> = {}) =>
+    activity.push({ type, detail, asset, amount, block: e.block, tx: e.tx_hash, ...extra });
+  // a relayed order's fee is its own event in the same transaction; a window's ETH/USD comes from its seal
+  const orderFees = new Map(events.filter((x) => x.name === "OrderFeePaid").map((x) => [x.tx_hash, BigInt(x.args["fee"])]));
+  const ethUsdOf = new Map(events.filter((x) => x.name === "WindowSealed").map((x) => [`${BigInt(x.args["asset"])}:${x.args["epoch"]}`, BigInt(x.args["ethUsd"])]));
   const slots = new Map<string, number>();
 
   const add = (asset: bigint, amount: bigint, blinding: bigint, label: bigint, origin: string) => {
@@ -222,8 +228,9 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
       const released = BigInt(a["released"] ?? 0);
       const relayed = BigInt(a["fee"] ?? 0) > 0n ? " Sent through the relayer." : "";
       const outs = memo.outs.filter(([amount]) => BigInt(amount) > 0n).length;
-      if (released > 0n) log(e, "Withdrawal", `Released to ${getAddress(a["to"])}.${relayed}`, BigInt(a["asset"]), released);
-      else log(e, "Notes", `${memo.ins.length > 1 ? "Two notes merged into one" : `One note split into ${outs}`}.${relayed}`, BigInt(a["asset"]), null);
+      const fee = BigInt(a["asset"]) === ETH && BigInt(a["fee"] ?? 0) > 0n ? { feeWei: BigInt(a["fee"]) } : {}; // the relayer takes ETH only
+      if (released > 0n) log(e, "Withdrawal", `Released to ${getAddress(a["to"])}.${relayed}`, BigInt(a["asset"]), released, fee);
+      else log(e, "Notes", `${memo.ins.length > 1 ? "Two notes merged into one" : `One note split into ${outs}`}.${relayed}`, BigInt(a["asset"]), null, fee);
     } else if (e.name === "OrderResting") {
       const key = `${a["asset"]}:${a["epoch"]}`;
       const slot = slots.get(key) ?? 0;
@@ -250,7 +257,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
       if (opening && commitmentOf(asset, opening) === commitment) {
         orders.push({ asset, epoch: Number(a["epoch"]), slot, commitment, opening, status: "open" });
         const lockAsset = opening.buy ? ETH : asset;
-        log(e, "Sealed order", `${opening.buy ? "Buy" : "Sell"} sealed into window ${a["epoch"]}. The lock is held until it settles.`, lockAsset, opening.lock * (opening.buy ? ETH_UNIT : unit(asset)));
+        log(e, "Sealed order", `${opening.buy ? "Buy" : "Sell"} sealed into window ${a["epoch"]}. The lock is held until it settles.`, lockAsset, opening.lock * (opening.buy ? ETH_UNIT : unit(asset)), orderFees.has(e.tx_hash) ? { feeWei: orderFees.get(e.tx_hash) } : {});
       }
     } else if (e.name === "WindowSettled") {
       for (const o of orders.filter((x) => x.status === "open" && x.asset === BigInt(a["asset"]) && x.epoch === Number(a["epoch"]))) {
@@ -261,7 +268,9 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
         const { opening: p } = o;
         if (p.buy) add(o.asset, BigInt(r.qty) * unit(o.asset), blind(p.salt, 0n), p.label, "Fill");
         else add(ETH, (BigInt(r.eth) - BigInt(r.fee)) * ETH_UNIT, blind(p.salt, 0n), p.label, "Fill");
-        log(e, "Fill", `Window ${a["epoch"]} crossed${r.rolls ? "; the rest carries to the next window" : ""}.`, p.buy ? o.asset : ETH, p.buy ? BigInt(r.qty) * unit(o.asset) : (BigInt(r.eth) - BigInt(r.fee)) * ETH_UNIT);
+        const ethUsd = ethUsdOf.get(`${o.asset}:${o.epoch}`);
+        const fill = { feeWei: BigInt(r.fee) * ETH_UNIT, ...(ethUsd && BigInt(r.qty) > 0n ? { priceUsd: (BigInt(r.eth) * ethUsd) / BigInt(r.qty) } : {}) };
+        log(e, "Fill", `Window ${a["epoch"]} crossed${r.rolls ? "; the rest carries to the next window" : ""}.`, p.buy ? o.asset : ETH, p.buy ? BigInt(r.qty) * unit(o.asset) : (BigInt(r.eth) - BigInt(r.fee)) * ETH_UNIT, fill);
         if (!r.rolls) add(p.buy ? ETH : o.asset, BigInt(r.left) * (p.buy ? ETH_UNIT : unit(o.asset)), blind(p.salt, 1n), p.label, "Released lock");
         if (!r.rolls && BigInt(r.left) > 0n) log(e, "Released lock", "The unfilled part of the lock came back as a note.", p.buy ? ETH : o.asset, BigInt(r.left) * (p.buy ? ETH_UNIT : unit(o.asset)));
       }

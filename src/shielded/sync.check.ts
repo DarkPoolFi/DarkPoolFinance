@@ -136,4 +136,21 @@ assert.deepEqual(live.map((n) => [n.origin, n.asset === ETH ? "ETH" : "AAPL", St
 ].sort());
 assert.deepEqual(plain.orders.map((o) => o.status), ["settled"]);
 assert.equal(plain.notes.find((n) => n.origin === "Fill")!.index, 5, "leaf positions found by lookup");
+
+// TU-10: the activity rows the CSV export carries: a relayed order's fee (OrderFeePaid in its transaction) and a fill's
+// settlement fee and average USD price at its window's sealed ETH/USD
+const orderTx = events.find((e) => e.name === "OrderResting")!.tx_hash;
+const priced = [
+  ...events,
+  { block: 103, log_index: 9, tx_hash: orderTx, name: "OrderFeePaid", args: { relayer: POOL, fee: "326000000000000" } },
+  { block: 104, log_index: 9, tx_hash: "0xseal", name: "WindowSealed", args: { asset: "0x" + AAPL.toString(16), epoch: "5", refUsd: "300000000", ethUsd: "3000000000", live: true } },
+];
+const rows = (await rebuild(keys, wallet.address, full.leaves, priced, unit)).activity;
+const row = (type: string) => rows.find((r) => r.type === type)!;
+assert.equal(row("Sealed order").feeWei, 326_000_000_000_000n);
+assert.equal(row("Sealed order").tx, orderTx);
+assert.equal(row("Fill").feeWei, 225n * ETH_UNIT);
+assert.equal(row("Fill").priceUsd, 900_000_000n, "0.45 ETH for 1.5 tokens at $3,000 = $900 per token");
+assert.equal(row("Deposit").feeWei, undefined);
+assert.equal(plain.activity.find((r) => r.type === "Fill")!.priceUsd, undefined, "no price without the window's seal");
 console.log("sync.check: ok");

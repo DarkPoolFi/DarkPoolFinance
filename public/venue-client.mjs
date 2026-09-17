@@ -241,6 +241,8 @@ export class VenueLive {
         type: 'Fill',
         detail: `${f.side.toUpperCase()} ${micro(f.qty)} ${f.symbol} at ${micro(f.ref_usd).toFixed(2)} USD`,
         amount: f.side === 'buy' ? -(micro(f.eth_amount) + micro(f.fee_eth)) : micro(f.eth_amount) - micro(f.fee_eth),
+        feeEth: micro(f.fee_eth),
+        priceUsd: micro(f.ref_usd),
         time: Date.parse(f.created_at),
         window: Number(f.window_id),
       })),

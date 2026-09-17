@@ -229,6 +229,9 @@ async function publishActivity(rows) {
     unit: r.symbol,
     time: blockTimes.get(r.block) ?? null,
     block: r.block,
+    tx: r.tx,
+    feeEth: r.feeEth,
+    priceUsd: r.priceUsd,
     window: null,
   }));
   window.darkpoolRenderActivity?.();

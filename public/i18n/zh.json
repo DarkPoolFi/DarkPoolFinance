@@ -1410,5 +1410,10 @@
  "The proof did not verify. Refresh the page and try again.": "证明未通过验证，请刷新页面后重试。",
  "The relayer fee in this order does not match what the pool expects. Refresh the page and try again.": "此订单中的中继费与资金池要求不符，请刷新页面后重试。",
  "This market already holds the most open orders it can settle. Try again after the current window settles.": "该市场的挂单数量已达结算上限，请在当前窗口结算后重试。",
- "This market is not taking new orders.": "该市场暂不接受新订单。"
+ "This market is not taking new orders.": "该市场暂不接受新订单。",
+ "Choose a start date on or before the end date.": "请选择不晚于结束日期的开始日期。",
+ "From": "从",
+ "To": "至",
+ "No activity in those dates.": "所选日期内没有活动。",
+ "Your activity was exported: {0} rows.": "你的活动已导出：{0} 行。"
 }

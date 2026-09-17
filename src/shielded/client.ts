@@ -81,7 +81,7 @@ const zeroPath = () => Array<bigint>(DEPTH).fill(0n);
 // the network is always the fallback.
 const CACHE_DB = "darkpoolfi";
 const CACHE_STORE = "public";
-const CACHE_KEY = "pool";
+const CACHE_KEY = "pool-2"; // new key whenever ledger EVENT_NAMES changes (2: OrderFeePaid, WindowSealed for the CSV export)
 function cacheDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {
@@ -742,6 +742,8 @@ export class ShieldedAccount {
         amount: r.amount === null ? null : Number(fmt(r.asset, r.amount)),
         block: r.block,
         tx: r.tx,
+        feeEth: r.feeWei === undefined ? null : formatUnits(r.feeWei, 18),
+        priceUsd: r.priceUsd === undefined ? null : formatUnits(r.priceUsd, 6),
       })),
       relayFees: { transactEth: formatUnits(BigInt(this.config.relayFees.transactWei), 18), orderEth: formatUnits(BigInt(this.config.relayFees.orderWei), 18) },
       depositFeeEth: formatUnits(BigInt(this.config.depositFeeWei), 18),
