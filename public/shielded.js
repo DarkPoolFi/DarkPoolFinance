@@ -99,6 +99,7 @@ let venue = { at: 0, data: null };
 // Status card: "working" (spinner, moving bar, seconds counter) while an action runs, then "done" or "error".
 const STATE_LABEL = { working: 'IN PROGRESS', done: 'DONE', error: 'COULD NOT COMPLETE', info: 'NOTE' };
 let started = 0;
+let inView = false; // the card was brought into view for the running action; later messages update it in place (TU-09)
 function say(text, state = busy ? 'working' : 'info') {
   const el = $('#sp-log');
   const changed = el.hidden || el.dataset.state !== state;
@@ -112,7 +113,10 @@ function say(text, state = busy ? 'working' : 'info') {
     void el.offsetWidth; // restart the entrance animation
     el.style.animation = '';
   }
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (busy && inView && state !== 'error') return;
+  inView = busy;
+  const { top, bottom } = el.getBoundingClientRect();
+  if (top < 0 || bottom > innerHeight) el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 function tickTime() {
   const time = $('#sp-log .sp-status-time');
@@ -257,6 +261,7 @@ async function act(fn) {
   if (busy) return;
   busy = true;
   started = Date.now();
+  inView = false;
   const buttons = [...document.querySelectorAll('#view-shielded button')];
   buttons.forEach((b) => (b.disabled = true));
   say('Getting ready…');
