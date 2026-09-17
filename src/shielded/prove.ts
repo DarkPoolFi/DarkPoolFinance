@@ -5,7 +5,7 @@ import { Noir, type CompiledCircuit, type InputMap } from "@noir-lang/noir_js";
 
 export type CircuitName = "deposit" | "transact" | "order_validity" | "reclaim" | "tree_update" | "batch_cross";
 
-type Input = bigint | boolean | number | string | Input[] | { [key: string]: Input };
+export type Input = bigint | boolean | number | string | Input[] | { [key: string]: Input };
 
 /** bigints become 0x-hex field strings; everything else passes through. */
 const toInput = (v: Input): InputMap[string] =>

@@ -350,6 +350,7 @@ $('#sp-unlock').addEventListener('click', () =>
     if (!window.darkpoolShieldedReady) throw Error('The shielded client did not load. Reload the page.');
     say('Loading the proving system…');
     const client = await window.darkpoolShieldedReady;
+    client.preloadProver(); // TU-20: the proving stack downloads while you sign and the account syncs
     say('Sign the key message in your wallet. It sends no transaction.');
     account = await client.ShieldedAccount.open(window.darkpoolMetaMask());
     $('#sp-withdraw-to').value = account.wallet;

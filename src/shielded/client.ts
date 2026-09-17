@@ -3,18 +3,14 @@
 // data and sealed ciphertexts, and Merkle paths are built locally so nobody learns which note is being spent.
 // Transactions and orders go through the relayer by default, so the connected wallet is only ever linked to its own
 // deposits. Every note carries its deposit's label: withdrawals prove that label is in the published association set.
-import initAcvm from "@noir-lang/acvm_js";
-import acvmWasm from "@noir-lang/acvm_js/web/acvm_js_bg.wasm?url";
-import initAbi from "@noir-lang/noirc_abi";
-import abiWasm from "@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm?url";
-import type { CompiledCircuit } from "@noir-lang/noir_js";
 import { AbiCoder, Interface, ZeroAddress, formatUnits, getAddress, hexlify, isHexString, keccak256, toUtf8Bytes } from "ethers";
 import { KEY_MESSAGE, keysFromSignature, seal, type ShieldedKeys } from "./crypto";
 import { DEPOSIT_DOMAIN, loadPool, memoOpener, rebuild, type Opener, type PoolSnapshot, type Activity, type Grant, type MyOrder, type Note, type OrderMemo, type PoolEvent, type TransactMemo } from "./ledger";
 import { FEE_NOTE_ORDERS, commitmentOf, feeNoteSource, openingToJson, type OrderOpening } from "./orders";
 import { DEPTH, ETH, ETH_UNIT, FIELD, PLAIN, aspLeaf, blind, depositLabel, hex, note, nullifier, orderNullifier, pathOf, ready, rootOf, unitOf, type OrderTerms } from "./protocol";
 import { portfolio } from "./pnl";
-import { prove, type CircuitName } from "./prove";
+import type { Input } from "./prove";
+import type { BrowserCircuit } from "./prove.worker";
 import { rfqCommitment } from "./rfq";
 
 export type { MyOrder, Note } from "./ledger";
@@ -170,22 +166,70 @@ export function orderTerms(kind: OrderKind, text: string, qty: bigint): OrderTer
   return kind === "min" ? { minQty: size, display: 0n, peg: 0n, rfq: 0n } : { minQty: 0n, display: size, peg: 0n, rfq: 0n };
 }
 
-let noirReady: Promise<unknown> | undefined;
-const initNoir = () => (noirReady ??= Promise.all([initAcvm({ module_or_path: fetch(acvmWasm) }), initAbi({ module_or_path: fetch(abiWasm) })]));
+// Proving lives in ./prove.worker (TU-20). The stack it imports — bb.js and the noir WASM — is several megabytes and
+// only an unlocked account ever needs it, so nothing here references it statically: the worker is named by URL, and the
+// in-page fallback is an import() taken only where a module worker cannot start. Proving off the main thread is what
+// keeps the dashboard's countdowns, forms and status card alive while a proof runs.
+interface Proof {
+  proof: string;
+  publicInputs: string[];
+}
+let worker: Worker | null | undefined; // undefined: not tried yet. null: unavailable, so the page proves it itself.
+let jobId = 0;
+const pending = new Map<number, { resolve: (p: Proof) => void; reject: (e: Error) => void }>();
 
-const circuits: Record<CircuitName, () => Promise<{ default: unknown }>> = {
-  deposit: () => import("./circuits/deposit.json"),
-  transact: () => import("./circuits/transact.json"),
-  order_validity: () => import("./circuits/order_validity.json"),
-  reclaim: () => import("./circuits/reclaim.json"),
-  tree_update: () => import("./circuits/tree_update.json"),
-  batch_cross: () => import("./circuits/batch_cross.json"),
-};
-async function proveCircuit(name: CircuitName, inputs: Parameters<typeof prove>[1]) {
-  await initNoir();
-  const circuit = (await circuits[name]()).default as CompiledCircuit;
+function prover(): Worker | null {
+  if (worker !== undefined) return worker;
+  worker = null;
+  try {
+    if (typeof Worker === "undefined") return worker;
+    const w = new Worker(new URL("./prove.worker.ts", import.meta.url), { type: "module" });
+    w.onmessage = ({ data }: MessageEvent<{ id: number; ok: boolean; result: Proof; error: string }>) => {
+      const job = pending.get(data.id);
+      pending.delete(data.id);
+      if (job) data.ok ? job.resolve(data.result) : job.reject(Error(data.error));
+    };
+    w.onerror = () => {
+      worker = null; // whatever killed it, the next proof runs in the page
+      for (const job of pending.values()) job.reject(Error("The proving worker stopped. Reload the page and try again."));
+      pending.clear();
+    };
+    worker = w;
+  } catch {
+    worker = null;
+  }
+  return worker;
+}
+
+let warming: Promise<void> | undefined;
+/** Starts the proving stack downloading and initialising, so the first proof does not also pay for it. Resolves either
+ * way: a stack that failed to warm fails again with its real error when a proof asks for it. */
+export function preloadProver(): Promise<void> {
+  const w = prover();
+  warming ??= w
+    ? new Promise<void>((done) => {
+        const id = ++jobId;
+        pending.set(id, { resolve: () => done(), reject: () => done() });
+        w.postMessage({ id, warm: true });
+      })
+    : import("./prove.worker").then(
+        (m) => m.warm().then(() => {}),
+        () => {},
+      );
+  return warming;
+}
+
+async function proveCircuit(name: BrowserCircuit, inputs: Record<string, Input>) {
+  await preloadProver(); // downloading megabytes of WASM is not proving time, so it sits outside the TU-35 clock
   const started = performance.now();
-  const result = await prove(circuit, inputs);
+  const w = prover();
+  const result = w
+    ? await new Promise<Proof>((resolve, reject) => {
+        const id = ++jobId;
+        pending.set(id, { resolve, reject });
+        w.postMessage({ id, name, inputs });
+      })
+    : await (await import("./prove.worker")).proveNamed(name, inputs);
   // TU-35: report the duration only (no account data); never let it affect the action
   if (typeof window !== "undefined") {
     const body = JSON.stringify({ circuit: name, ms: Math.round(performance.now() - started), cores: navigator.hardwareConcurrency });

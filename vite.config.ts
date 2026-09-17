@@ -13,7 +13,9 @@ export default defineConfig({
   // worker scripts are loaded by path, so scripts/ship-provers.mjs copies them in after the build.
   nitro: { traceDeps: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/acvm_js", "@noir-lang/noirc_abi"] } as { preset?: string },
   // noir's WASM packages must not be pre-bundled in dev (their init fetches the .wasm next to the module).
-  vite: { optimizeDeps: { exclude: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/acvm_js", "@noir-lang/noirc_abi"] } },
+  // ES worker output so the proving worker (src/shielded/prove.worker.ts) can code-split: at the default "iife" the two
+  // 4 MB bb.js WASM modules are inlined into one file and the browser downloads both.
+  vite: { optimizeDeps: { exclude: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/acvm_js", "@noir-lang/noirc_abi"] }, worker: { format: "es" } },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
