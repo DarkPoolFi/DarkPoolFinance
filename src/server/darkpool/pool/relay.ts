@@ -1,7 +1,7 @@
 // Relayer (plan.md X1.3): submits users' shielded transactions and orders from the pool operator wallet, so neither a
 // withdrawal's recipient nor an order is linked to the wallet that deposited. Every proof binds its relayer and fee, so
 // the relayer can only forward it. Fees are ETH: transactions of ETH notes, and orders (fee from a separate ETH note).
-import { ZeroAddress, getAddress, isHexString } from "ethers";
+import { Interface, ZeroAddress, getAddress, isHexString } from "ethers";
 import { provider } from "../chain";
 import { alert } from "../alerts";
 import { rpc } from "../db";
@@ -39,6 +39,66 @@ const hexBytes = (v: unknown, name: string, max: number) => {
   return v as string;
 };
 
+// The custom errors a relayed transact / placeOrder can revert with: the pool's (DarkPoolShieldedPool.sol) and the
+// bb-generated verifiers' (contracts/src/verifiers), which bubble up through the pool's verify call.
+const REVERTS = new Interface([
+  ...["MarketNotListed", "BadFee", "BadAmount", "BadCount", "ZeroAddress", "NotInField", "InvalidProof", "UnknownRoot", "NoteSpent", "TreeFull", "VenueFull"],
+  ...["UnknownAssociationRoot", "AssociationRequired", "TransferFailed", "Reentrancy"],
+  ...["ConsistencyCheckFailed", "GeminiChallengeInSubgroup", "InvertOfZero", "ModExpFailed", "NotPowerOfTwo", "PointAtInfinity", "ProofLengthWrong"],
+  ...["PublicInputsLengthWrong", "ShpleminiFailed", "SumcheckFailed", "ValueGeFieldOrder", "ValueGeGroupOrder", "ValueGeLimbMax"],
+].map((name) => `error ${name}()`).concat("error ProofLengthWrongWithLogN(uint256 logN, uint256 actualLength, uint256 expectedLength)"));
+
+/** Revert data from an ethers call error, wherever the provider put it. */
+const revertData = (e: unknown) => {
+  const x = e as { data?: unknown; error?: { data?: unknown }; info?: { error?: { data?: unknown } } } | null;
+  return [x?.data, x?.error?.data, x?.info?.error?.data].find((d): d is string => typeof d === "string" && /^0x[0-9a-f]{8}/i.test(d)) ?? null;
+};
+
+/**
+ * A pool revert as a sentence the user can act on (TU-01); null when the failure is not a revert (network, gas), which
+ * the caller reports as before. Selectors outside the pool and verifier ABIs get a safe fallback.
+ */
+export function rejection(e: unknown): UserError | null {
+  const data = revertData(e);
+  if (!data) return null;
+  let name: string | undefined;
+  try {
+    name = REVERTS.parseError(data)?.name;
+  } catch {
+    // malformed arguments: treat as unknown
+  }
+  switch (name) {
+    case "NoteSpent":
+      return new UserError("One of these notes was already spent. Your balance is refreshing; try again in a minute.");
+    case "UnknownRoot":
+      return new UserError("The pool has not added these notes to its tree yet. Try again in about a minute.");
+    case "VenueFull":
+      return new UserError("This market already holds the most open orders it can settle. Try again after the current window settles.");
+    case "MarketNotListed":
+      return new UserError("This market is not taking new orders.");
+    case "UnknownAssociationRoot":
+    case "AssociationRequired":
+      return new UserError("The pool needs a current association set for this withdrawal. Refresh the page and try again.");
+    case "BadFee":
+      return new UserError("The relayer fee in this order does not match what the pool expects. Refresh the page and try again.");
+    case "TreeFull":
+      return new UserError("The pool's note tree is full, so it cannot create new notes.");
+    case "TransferFailed":
+      return new UserError("The pool could not complete the payout. Try again later.");
+    case "Reentrancy":
+      return new UserError("The pool was busy with another transaction. Try again.");
+    case "BadAmount":
+    case "BadCount":
+    case "ZeroAddress":
+      return new UserError("The pool refused this request's amounts or addresses. Refresh the page and try again.");
+    case undefined:
+      console.error("unrecognised pool revert", data.slice(0, 10));
+      return new UserError("The pool rejected this request. Refresh the page and try again.");
+    default: // NotInField, InvalidProof and every verifier error
+      return new UserError("The proof did not verify. Refresh the page and try again.");
+  }
+}
+
 async function checkFee(kind: RelayKind, relayer: string, fee: bigint) {
   if (relayer !== operator().address) throw new UserError(`relayer must be ${operator().address}`);
   const quote = await relayQuote(kind);
@@ -51,6 +111,8 @@ async function submit(kind: RelayKind, fee: bigint, quote: bigint, fn: string, a
   try {
     tx = await sendPool(fn, args);
   } catch (e) {
+    const rejected = rejection(e);
+    if (rejected) throw rejected;
     const reason = (e as { shortMessage?: string; message?: string }).shortMessage ?? String(e);
     throw new UserError(`the pool rejects this ${fn === "transact" ? "transaction" : "order"}: ${reason.slice(0, 160)}`);
   }

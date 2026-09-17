@@ -1398,5 +1398,17 @@
  "Value now unavailable (price stale)": "当前价值暂不可用（价格过时）",
  "Withdrawn": "已提取",
  "You have withdrawn all your shares here.": "你已提取在此处的全部份额。",
- "Some token deposits could not be priced, so they count at their ETH part only.": "部分代币存入无法定价，因此只按其 ETH 部分计算。"
+ "Some token deposits could not be priced, so they count at their ETH part only.": "部分代币存入无法定价，因此只按其 ETH 部分计算。",
+ "One of these notes was already spent. Your balance is refreshing; try again in a minute.": "其中一张票据已被花费。你的余额正在刷新，请一分钟后重试。",
+ "The pool could not complete the payout. Try again later.": "资金池未能完成付款，请稍后重试。",
+ "The pool has not added these notes to its tree yet. Try again in about a minute.": "资金池尚未将这些票据加入池树，请大约一分钟后重试。",
+ "The pool needs a current association set for this withdrawal. Refresh the page and try again.": "此次提取需要最新的关联集合，请刷新页面后重试。",
+ "The pool refused this request's amounts or addresses. Refresh the page and try again.": "资金池拒绝了此请求中的金额或地址，请刷新页面后重试。",
+ "The pool rejected this request. Refresh the page and try again.": "资金池拒绝了此请求，请刷新页面后重试。",
+ "The pool was busy with another transaction. Try again.": "资金池正在处理另一笔交易，请重试。",
+ "The pool's note tree is full, so it cannot create new notes.": "资金池的票据树已满，无法创建新票据。",
+ "The proof did not verify. Refresh the page and try again.": "证明未通过验证，请刷新页面后重试。",
+ "The relayer fee in this order does not match what the pool expects. Refresh the page and try again.": "此订单中的中继费与资金池要求不符，请刷新页面后重试。",
+ "This market already holds the most open orders it can settle. Try again after the current window settles.": "该市场的挂单数量已达结算上限，请在当前窗口结算后重试。",
+ "This market is not taking new orders.": "该市场暂不接受新订单。"
 }

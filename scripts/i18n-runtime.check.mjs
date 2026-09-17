@@ -66,6 +66,9 @@ for (const s of [
 
 // the chain's own revert reason stays as sent (TU-01 decodes it); the sentence around it is translated
 assert.equal(translate("the pool rejects this order: execution reverted"), "资金池拒绝了此订单：execution reverted");
+// decoded pool reverts (TU-01, src/server/darkpool/pool/relay.ts)
+zh("One of these notes was already spent. Your balance is refreshing; try again in a minute.");
+zh("The proof did not verify. Refresh the page and try again.");
 
 // pieces joined with + rather than a template are keyed by hand
 assert.equal(translate("Window 5965261 · 300 second window"), "窗口 5965261 · 300 秒窗口");
