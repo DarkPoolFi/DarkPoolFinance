@@ -1,5 +1,5 @@
 // bun supabase/checks/pool.check.ts
-// Shielded pool mirror SQL (0008) in PGlite: idempotent event recording with the cursor, leaf order and gap stats,
+// Shielded pool mirror SQL (0008, open windows as rewritten in 0017) in PGlite: idempotent event recording with the cursor, leaf order and gap stats,
 // open windows in slot order with sealed / settled / abandoned status, operator openings, lockdown.
 import { PGlite } from "@electric-sql/pglite";
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 
 const db = new PGlite();
 await db.exec(`create role anon; create role authenticated; create role service_role; create schema auth; create table auth.users (id uuid primary key);`);
-for (const f of ["0001_darkpool_core.sql", "0002_darkpool_auth.sql", "0003_darkpool_funding.sql", "0004_darkpool_venue.sql", "0005_darkpool_withdrawals.sql", "0006_darkpool_vault.sql", "0007_darkpool_ops.sql", "0008_darkpool_pool.sql", "0008_darkpool_pool.sql"]) {
+for (const f of ["0001_darkpool_core.sql", "0002_darkpool_auth.sql", "0003_darkpool_funding.sql", "0004_darkpool_venue.sql", "0005_darkpool_withdrawals.sql", "0006_darkpool_vault.sql", "0007_darkpool_ops.sql", "0008_darkpool_pool.sql", "0008_darkpool_pool.sql", "0009_darkpool_cutoff.sql", "0010_darkpool_pool_v3.sql", "0017_darkpool_event_indexes.sql", "0017_darkpool_event_indexes.sql"]) {
   await db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
 }
 const q = async (sql: string, params: unknown[] = []) => (await db.query<Record<string, any>>(sql, params)).rows;
