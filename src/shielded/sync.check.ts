@@ -72,7 +72,8 @@ emit(104, "WindowSettled", { asset: "0x" + AAPL.toString(16), epoch: "5", notes:
 // --- a fake site API that can show any prefix of the history ---
 let visible = { events: 0, leaves: 0, pool: POOL };
 const requests: string[] = [];
-globalThis.fetch = (async (input: string | URL | Request) => {
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  assert.notEqual(init?.cache, "no-store", "TU-13: the browser cache is left to the endpoints' own max-age");
   const url = new URL(String(input), "http://site.test");
   requests.push(url.pathname + url.search);
   const shown = events.slice(0, visible.events);

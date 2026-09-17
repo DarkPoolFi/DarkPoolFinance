@@ -124,7 +124,7 @@ async function writePoolCache(snapshot: PoolSnapshot) {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { cache: "no-store" });
+  const res = await fetch(path); // the endpoint's own Cache-Control decides; see loadPool (TU-13)
   const body = await res.json().catch(() => null);
   if (!body?.ok) throw Error(body?.error || `Request failed: ${path}`);
   return body.data as T;

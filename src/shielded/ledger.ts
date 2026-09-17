@@ -97,7 +97,9 @@ export interface PoolSnapshot {
  */
 export async function loadPool<C>(base = "", prev: PoolSnapshot | null = null) {
   const get = async <T,>(path: string): Promise<T> => {
-    const res = await fetch(base + path, { cache: "no-store" });
+    // No "no-store" (TU-13): each endpoint declares its own freshness (5-10s) and the mirror is a cron run behind
+    // anyway, so a repeat inside that window — the second sync of an action — may come from the browser cache.
+    const res = await fetch(base + path);
     const body = await res.json().catch(() => null);
     if (!body?.ok) throw Error(body?.error || `Request failed: ${path}`);
     return body.data as T;
@@ -257,7 +259,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
       if (opening && commitmentOf(asset, opening) === commitment) {
         orders.push({ asset, epoch: Number(a["epoch"]), slot, commitment, opening, status: "open" });
         const lockAsset = opening.buy ? ETH : asset;
-        log(e, "Sealed order", `${opening.buy ? "Buy" : "Sell"} sealed into window ${a["epoch"]}. The lock is held until it settles.`, lockAsset, opening.lock * (opening.buy ? ETH_UNIT : unit(asset)), orderFees.has(e.tx_hash) ? { feeWei: orderFees.get(e.tx_hash) } : {});
+        log(e, "Sealed order", `${opening.buy ? "Buy" : "Sell"} sealed into window ${a["epoch"]}. The lock is held until it settles.`, lockAsset, opening.lock * (opening.buy ? ETH_UNIT : unit(asset)), orderFees.has(e.tx_hash) ? { feeWei: orderFees.get(e.tx_hash)! } : {});
       }
     } else if (e.name === "WindowSettled") {
       for (const o of orders.filter((x) => x.status === "open" && x.asset === BigInt(a["asset"]) && x.epoch === Number(a["epoch"]))) {
