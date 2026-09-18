@@ -1,5 +1,5 @@
 // bun --env-file=.env.local scripts/telegram-setup.ts [site origin, default https://darkpoolfi.tech]
-// One-time Telegram bot setup (telegram_tech_update.md TG-0): points the webhook at /api/telegram with the secret
+// One-time Telegram bot setup (TG-0): points the webhook at /api/telegram with the secret
 // header, sets the command menu and description in English and Chinese, and sends a test operator alert.
 // Needs TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET (the same values as in Vercel). Without
 // TELEGRAM_ALERT_CHAT_ID it lists the chats that recently messaged the bot, so you can pick the operator chat.

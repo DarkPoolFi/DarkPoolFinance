@@ -5,7 +5,7 @@ interface Update {
   message?: { chat: { id: number; type: string }; text?: string; from?: { language_code?: string } };
 }
 
-// Telegram webhook (telegram_tech_update.md TG-0). Only Telegram knows the secret header, set by
+// Telegram webhook (TG-0). Only Telegram knows the secret header, set by
 // scripts/telegram-setup.ts. The reply rides back in the response body, so a command costs no extra Bot API call.
 // Anything else is answered 200 with nothing, or Telegram retries it.
 export const Route = createFileRoute("/api/telegram")({

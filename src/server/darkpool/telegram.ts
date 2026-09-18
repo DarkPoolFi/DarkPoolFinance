@@ -1,4 +1,4 @@
-// Telegram bot (telegram_tech_update.md TG-0 / TG-1). Answers public commands from the same public endpoints the site
+// Telegram bot (TG-0 / TG-1). Answers public commands from the same public endpoints the site
 // reads, so every answer matches the dashboard. It never asks for, holds or receives keys, signatures or wallets, and
 // shows nothing before the site does: no current-window order counts, the tape keeps its delay.
 import { createHash, timingSafeEqual } from "node:crypto";
