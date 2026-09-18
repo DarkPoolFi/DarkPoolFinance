@@ -6,7 +6,7 @@
 import { AbiCoder, Interface, ZeroAddress, formatUnits, getAddress, hexlify, isHexString, keccak256, toUtf8Bytes } from "ethers";
 import { KEY_MESSAGE, keysFromSignature, parseShieldedAddress, seal, shieldedAddress, type ShieldedKeys } from "./crypto";
 import { DEPOSIT_DOMAIN, loadPool, memoOpener, rebuild, type Opener, type PoolSnapshot, type Activity, type Grant, type MyOrder, type Note, type OrderMemo, type PoolEvent, type TransactMemo } from "./ledger";
-import { FEE_NOTE_ORDERS, commitmentOf, feeNoteSource, openingToJson, type OrderOpening } from "./orders";
+import { FEE_NOTE_ORDERS, commitmentOf, feeNoteSource, openingToJson, tidyPlan, type OrderOpening } from "./orders";
 import { DEPTH, ETH, ETH_UNIT, FIELD, PLAIN, aspLeaf, blind, depositLabel, hex, note, nullifier, orderNullifier, pathOf, ready, rootOf, unitOf, type OrderTerms } from "./protocol";
 import { portfolio } from "./pnl";
 import type { Input } from "./prove";
@@ -630,6 +630,68 @@ export class ShieldedAccount {
     if (!amount || amount <= 0n) throw Error("Enter an amount.");
     const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
     return this.transact(asset, this.cover(asset, amount + fee + 1n, 1), [amount], 0n, ZeroAddress, selfSubmit, progress);
+  }
+
+  /** What tidying `symbol`'s notes would do and cost (see tidyPlan), before anything is sent. ETH keeps a fee note. */
+  async tidyQuote(symbol: string, selfSubmit = false) {
+    await this.sync();
+    const asset = this.assetOf(symbol);
+    if (this.notes.some((n) => !n.spent && n.amount > 0n && n.asset === asset && n.index >= this.config.tree.size)) {
+      throw Error(`Some ${symbol} notes are still joining the pool tree. Tidy them in a minute or two.`);
+    }
+    const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
+    const { size } = this.feeNoteQuote();
+    const feeNote = asset === ETH ? { min: BigInt(this.config.relayFees.orderWei), max: size * 2n, size, cost: BigInt(this.config.relayFees.transactWei) } : undefined;
+    const plan = tidyPlan(this.spendableNotes(asset), fee, feeNote);
+    const format = (x: bigint) => formatUnits(x, this.decimalsOf(asset));
+    return { ...plan, feesText: formatUnits(plan.fees, 18), keepText: plan.keep && format(plan.keep.amount), splitText: formatUnits(size, 18) };
+  }
+
+  /**
+   * Tidy `symbol`'s notes as tidyQuote planned: merge same-deposit pairs round by round, waiting for each round's
+   * merged notes to join the tree, then split off a fee note if the plan said so. Returns how many transactions it sent.
+   */
+  async tidy(symbol: string, selfSubmit = false, progress: (s: string) => void = () => {}) {
+    const first = await this.tidyQuote(symbol, selfSubmit);
+    if (!first.merges && !first.split) throw Error(`Your ${symbol} notes are already tidy.`);
+    const asset = this.assetOf(symbol);
+    const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
+    const kept = first.keep?.commitment;
+    let sent = 0;
+    for (let round = 1; round <= first.rounds; round++) {
+      const { pairs } = tidyPlan(this.spendableNotes(asset).filter((n) => n.commitment !== kept), fee);
+      if (!pairs.length) break;
+      for (const [i, pair] of pairs.entries()) {
+        progress(`Round ${round} of ${first.rounds}: merge ${i + 1} of ${pairs.length}…`);
+        await this.transact(asset, pair, [], 0n, ZeroAddress, selfSubmit, progress);
+        sent++;
+      }
+      await this.untilSpendable(asset, pairs.flat(), progress);
+    }
+    if (first.split) {
+      const { size } = this.feeNoteQuote();
+      const source = feeNoteSource(this.spendableNotes(ETH), size, BigInt(this.config.relayFees.transactWei), 0n);
+      if (source) {
+        progress("Splitting off a note for relayed order fees…");
+        await this.transact(ETH, [source], [size], 0n, ZeroAddress, false, progress);
+        sent++;
+        await this.untilSpendable(ETH, [source], progress);
+      }
+    }
+    return sent;
+  }
+
+  /** Wait until `spent` show as spent and the notes they turned into have joined the tree. */
+  private async untilSpendable(asset: bigint, spent: Note[], progress: (s: string) => void) {
+    const ids = new Set(spent.map((n) => n.commitment));
+    for (const started = Date.now(); Date.now() - started < 6 * 60_000; ) {
+      progress("Waiting for the new notes to join the pool tree, usually a minute or two…");
+      await new Promise((r) => setTimeout(r, 10_000));
+      await this.sync().catch(() => {});
+      const done = this.notes.filter((n) => ids.has(n.commitment)).every((n) => n.spent);
+      if (done && !this.notes.some((n) => !n.spent && n.amount > 0n && n.asset === asset && n.index >= this.config.tree.size)) return;
+    }
+    throw Error("The new notes are still joining the pool tree. Run Tidy again in a minute to finish.");
   }
 
   /**

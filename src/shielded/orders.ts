@@ -119,3 +119,34 @@ export function feeNoteSource<N extends { amount: bigint }>(notes: N[], size: bi
     .reverse()
     .find((n) => n.amount >= size + cost + 1n && (lock === 0n || n.amount - size - cost >= lock || notes.some((o) => o !== n && o.amount >= lock)));
 }
+
+/**
+ * How to tidy one asset's spendable notes (largest first) into one note per deposit, merging `fee`-paying pairs.
+ * Merges run in rounds: each round merges disjoint same-label pairs, so N notes of a deposit take N-1 merges over
+ * ceil(log2 N) waits for the tree. Notes worth no more than a merge's fee are left alone. With `feeNote` (ETH), the
+ * smallest note sized between `min` and `max` is kept aside to pay relayed orders from; with none, one of `size` is
+ * split off afterwards (relayed, costing `cost`) when a merged note can afford it.
+ */
+export function tidyPlan<N extends { amount: bigint; label: bigint }>(
+  notes: N[],
+  fee: bigint,
+  feeNote?: { min: bigint; max: bigint; size: bigint; cost: bigint },
+) {
+  const usable = notes.filter((n) => n.amount > fee);
+  const keep = feeNote && [...usable].reverse().find((n) => n.amount >= feeNote.min && n.amount <= feeNote.max);
+  const groups = new Map<bigint, N[]>();
+  for (const n of usable) if (n !== keep) groups.set(n.label, [...(groups.get(n.label) ?? []), n]);
+  const pairs: [N, N][] = [];
+  let merges = 0;
+  let rounds = 0;
+  let largest = 0n; // the biggest note left once every merge is done
+  for (const g of groups.values()) {
+    for (let i = 0; i + 1 < g.length; i += 2) pairs.push([g[i]!, g[i + 1]!]);
+    merges += g.length - 1;
+    rounds = Math.max(rounds, Math.ceil(Math.log2(g.length)));
+    const total = g.reduce((s, n) => s + n.amount, 0n) - BigInt(g.length - 1) * fee;
+    if (total > largest) largest = total;
+  }
+  const split = Boolean(feeNote && !keep && largest >= feeNote.size + feeNote.cost + 1n);
+  return { pairs, merges, rounds, keep, split, dust: notes.length - usable.length, fees: BigInt(merges) * fee + (split ? feeNote!.cost : 0n) };
+}

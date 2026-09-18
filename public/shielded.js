@@ -418,6 +418,36 @@ $('#sp-split').addEventListener('click', () =>
   }),
 );
 
+// Tidy notes (TU-07): first show what it will do and cost, then run it from the button under that summary.
+$('#sp-tidy').addEventListener('click', () =>
+  act(async () => {
+    const symbol = $('#sp-notes-asset').value;
+    const self = $('#sp-notes-self').checked;
+    const plan = await account.tidyQuote(symbol, self);
+    if (!plan.merges && !plan.split) return say(`Your ${symbol} notes are already tidy: one per deposit, and nothing worth merging.`, 'info');
+    say(plan.merges ? `Merge transactions: ${plan.merges}. Waits for the pool tree: ${plan.rounds}, about two minutes each.` : 'Nothing to merge: you already have one note per deposit.', 'info');
+    const lines = [];
+    if (plan.fees !== 0n) lines.push(`Relayer fees: ${plan.feesText} ETH in total, taken from the notes.`);
+    if (plan.merges && (self || symbol !== 'ETH')) lines.push('Each merge is confirmed in your wallet.');
+    if (plan.keep) lines.push(`Your ${plan.keepText} ETH note stays aside for relayed order fees.`);
+    if (plan.split) lines.push(`Then a ${plan.splitText} ETH note is split off for relayed order fees.`);
+    if (plan.dust) lines.push(`Notes left as they are, worth less than a merge's fee: ${plan.dust}.`);
+    const text = $('#sp-log .sp-status-text');
+    for (const line of lines) text.append(' ', document.createTextNode(line));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'text-action';
+    button.textContent = 'Tidy notes now ↗';
+    button.addEventListener('click', () =>
+      act(async () => {
+        const sent = await account.tidy(symbol, self, say);
+        say(`Notes tidied. Transactions sent: ${sent}.`);
+      }),
+    );
+    text.append(' ', button);
+  }),
+);
+
 $('#sp-order').addEventListener('submit', (e) => {
   e.preventDefault();
   act(async () => {
