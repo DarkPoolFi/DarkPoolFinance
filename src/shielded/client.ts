@@ -133,6 +133,60 @@ async function post<T>(path: string, payload: unknown): Promise<T> {
   return body.data as T;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export type RelayState = { status: "none" | "submitting" | "sent" | "mined" | "reverted" | "replaced" | "unknown"; tx: string | null };
+
+/**
+ * Hands a proof to the relayer and waits for the chain (TU-03). The call carries a random id, so when a reply never
+ * arrives the same call can be sent again without a second broadcast, and its outcome can be looked up by id. Returns
+ * the mined hash; after two minutes still pending, the last known hash (the next sync shows the result either way).
+ * `fetchImpl` and `wait` are for the check script.
+ */
+export async function relayCall(payload: Record<string, unknown>, progress: (s: string) => void, fetchImpl: typeof fetch = (...a) => fetch(...a), wait = sleep): Promise<string> {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const ask = async (init?: RequestInit): Promise<{ data?: any; error?: string } | null> => {
+    try {
+      const res = await fetchImpl(init ? "/api/pool/relay" : `/api/pool/relay?id=${id}`, { ...init, signal: AbortSignal.timeout(60_000) });
+      const body = await res.json().catch(() => null);
+      if (body?.ok) return { data: body.data };
+      if (body && res.status < 500) return { error: String(body.error) }; // a definite refusal: nothing was sent
+    } catch {
+      // network error or timeout: no answer
+    }
+    return null;
+  };
+
+  let tx: string | null = null;
+  for (let attempt = 1; ; attempt++) {
+    const reply = await ask({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, id }) });
+    if (reply?.error !== undefined) throw Error(reply.error);
+    if (reply) {
+      tx = reply.data.tx ?? null;
+      break;
+    }
+    if (attempt === 3) {
+      throw Error("The relayer did not answer. If the transaction went through, your balance shows it within a few minutes; check before trying again.");
+    }
+    progress("No answer from the relayer yet. Asking again (it will not be sent twice)…");
+    await wait(3_000 * attempt);
+  }
+
+  for (const started = Date.now(); Date.now() - started < 120_000; await wait(2_500)) {
+    progress(tx ? `Submitted (${tx.slice(0, 10)}…). Waiting for it to be mined…` : "The relayer is submitting it…");
+    const s = (await ask())?.data as RelayState | undefined;
+    if (!s) continue;
+    if (s.status === "mined") return s.tx!;
+    if (s.status === "reverted") throw Error("The transaction failed on chain.");
+    if (s.status === "replaced") throw Error("The relayer could not get this transaction mined, so nothing was spent. Try again.");
+    if (s.status === "none") throw Error("The relayer never received this transaction, so nothing was sent. Try again.");
+    if (s.status === "unknown") break;
+    tx = s.tx ?? tx;
+  }
+  if (!tx) throw Error("The relayer has not confirmed this transaction. If it went through, your balance shows it within a few minutes; check before trying again.");
+  return tx;
+}
+
 /** Decimal text → integer with `decimals` places, no floating point; null when malformed. */
 export function toUnits(value: string, decimals: number): bigint | null {
   const m = String(value ?? "").trim().match(new RegExp(`^(\\d+)(?:\\.(\\d{0,${decimals}}))?$`));
@@ -520,7 +574,7 @@ export class ShieldedAccount {
     };
     if (relayed) {
       progress("Handing the proof to the relayer…");
-      return (await post<{ tx: string }>("/api/pool/relay", { kind: "transact", transaction: t, proof, memo: sealedMemo })).tx;
+      return relayCall({ kind: "transact", transaction: t, proof, memo: sealedMemo }, progress);
     }
     progress("Confirm the transaction in your wallet…");
     return this.send(this.config.pool, POOL.encodeFunctionData("transact", [Object.values(t), proof, sealedMemo]));
@@ -710,7 +764,7 @@ export class ShieldedAccount {
     };
     if (relayed) {
       progress("Handing the sealed order to the relayer…");
-      return (await post<{ tx: string }>("/api/pool/relay", { kind: "order", asset: address(asset), placement, proof, sealedOrder: utf8Hex(envelope) })).tx;
+      return relayCall({ kind: "order", asset: address(asset), placement, proof, sealedOrder: utf8Hex(envelope) }, progress);
     }
     progress("Confirm the sealed order in your wallet…");
     return this.send(this.config.pool, POOL.encodeFunctionData("placeOrder", [address(asset), Object.values(placement), proof, utf8Hex(envelope)]));

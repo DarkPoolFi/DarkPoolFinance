@@ -106,21 +106,78 @@ async function checkFee(kind: RelayKind, relayer: string, fee: bigint) {
   return quote;
 }
 
-async function submit(kind: RelayKind, fee: bigint, quote: bigint, fn: string, args: unknown[]) {
+/** TU-03: the browser's random id for one relayed call, or null from a client that predates it. */
+const clientId = (v: unknown) => {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string" || !/^[0-9a-f]{32}$/.test(v)) throw new UserError("id must be 32 lowercase hex characters");
+  return v;
+};
+
+interface RelayRow {
+  tx: string | null;
+  status: "submitting" | "sent" | "mined" | "reverted" | "replaced" | "unknown";
+  age_sec: number;
+  hashes: string[];
+  filler: boolean;
+}
+
+/** Which signed version of a send mined and how (any can, after gas bumps); null while none has a receipt. */
+async function outcome(hashes: string[], filler: boolean) {
+  for (const hash of [...hashes].reverse()) {
+    const receipt = await provider().getTransactionReceipt(hash);
+    if (!receipt) continue;
+    const status = filler && receipt.hash === hashes.at(-1) ? "replaced" : receipt.status === 1 ? "mined" : "reverted";
+    return { receipt, status } as const;
+  }
+  return null;
+}
+
+/**
+ * GET /api/pool/relay?id= (TU-03): what became of a relayed call, for a browser whose reply never came. `none` means the
+ * id never reached the relayer, so nothing was sent. A claim stuck in `submitting` for 5 minutes is `unknown`.
+ */
+export async function relayStatus(idParam: unknown) {
+  const id = clientId(idParam);
+  if (!id) throw new UserError("id required");
+  const r = await rpc<RelayRow | null>("dark_relay_status", { p_client_id: id });
+  if (!r) return { status: "none", tx: null };
+  if (r.status === "submitting") return { status: r.age_sec > 300 ? "unknown" : "submitting", tx: null };
+  if (r.status === "sent" || r.status === "mined" || r.status === "reverted") {
+    const o = await outcome(r.hashes, r.filler);
+    if (o) return { status: o.status, tx: o.receipt.hash };
+  }
+  return { status: r.status, tx: r.hashes.at(-1) ?? r.tx };
+}
+
+async function submit(kind: RelayKind, fee: bigint, quote: bigint, fn: string, args: unknown[], id: string | null) {
+  if (id) {
+    // two requests with one id race here; the loser gets the winner's tx, or null while the winner is still sending
+    const claim = await rpc<{ claimed: boolean; tx?: string | null }>("dark_relay_claim", {
+      p_client_id: id, p_kind: kind, p_fee: String(fee), p_quote: String(quote), p_gas_billed: String(RELAY_GAS[kind]),
+    });
+    if (!claim.claimed) return { tx: claim.tx ?? null };
+  }
+  // nothing reached the chain on any path that throws below, so the id is freed for an honest retry
+  const release = () => (id ? rpc("dark_relay_release", { p_client_id: id }).catch((e) => console.error("relay release failed", String(e))) : null);
   let tx: string | null;
   try {
     tx = await sendPool(fn, args);
   } catch (e) {
+    await release();
     const rejected = rejection(e);
     if (rejected) throw rejected;
     const reason = (e as { shortMessage?: string; message?: string }).shortMessage ?? String(e);
     throw new UserError(`the pool rejects this ${fn === "transact" ? "transaction" : "order"}: ${reason.slice(0, 160)}`);
   }
-  if (!tx) throw new UserError("the relayer has too many transactions in flight; try again in a minute");
+  if (!tx) {
+    await release();
+    throw new UserError("the relayer has too many transactions in flight; try again in a minute");
+  }
   // TU-35: fee against gas actually paid; settled by settleRelays. Already broadcast, so a failed write only loses the row.
-  await rpc("dark_relay_record", { p_kind: kind, p_tx: tx, p_fee: String(fee), p_quote: String(quote), p_gas_billed: String(RELAY_GAS[kind]) }).catch((e) =>
-    console.error("relay record failed", String(e)),
-  );
+  const recorded = id
+    ? rpc("dark_relay_sent", { p_client_id: id, p_tx: tx })
+    : rpc("dark_relay_record", { p_kind: kind, p_tx: tx, p_fee: String(fee), p_quote: String(quote), p_gas_billed: String(RELAY_GAS[kind]) });
+  await recorded.catch((e) => console.error("relay record failed", String(e)));
   return { tx };
 }
 
@@ -132,14 +189,12 @@ export async function settleRelays() {
   const pending = await rpc<{ id: number; kind: RelayKind; hashes: string[]; filler: boolean; age_sec: number }[]>("dark_relays_pending", {});
   const settled: Record<string, unknown>[] = [];
   for (const r of pending) {
-    let receipt = null;
-    for (const hash of [...r.hashes].reverse()) if ((receipt = await provider().getTransactionReceipt(hash))) break;
-    if (!receipt) {
+    const o = await outcome(r.hashes, r.filler);
+    if (!o) {
       if (r.age_sec > 86_400) await rpc("dark_relay_settle", { p_id: r.id, p_status: "unknown", p_gas_used: null, p_gas_price: null });
       continue;
     }
-    const replaced = r.filler && receipt.hash === r.hashes.at(-1);
-    const status = replaced ? "replaced" : receipt.status === 1 ? "mined" : "reverted";
+    const { receipt, status } = o;
     await rpc("dark_relay_settle", { p_id: r.id, p_status: status, p_gas_used: String(receipt.gasUsed), p_gas_price: String(receipt.gasPrice) });
     settled.push({ id: r.id, kind: r.kind, status, gasUsed: String(receipt.gasUsed) });
   }
@@ -151,10 +206,19 @@ export async function settleRelays() {
   return { pending: pending.length, settled };
 }
 
-/** POST { kind: "transact", transaction, proof, memo } | { kind: "order", asset, placement, proof, sealedOrder } */
+/**
+ * POST { kind: "transact", transaction, proof, memo, id? } | { kind: "order", asset, placement, proof, sealedOrder, id? }
+ * → { tx }. With an id seen before, nothing is sent again: tx is the first call's hash, or null while it is being sent.
+ */
 export async function relay(body: Record<string, unknown>) {
   const proof = body["proof"];
   if (!isHexString(proof) || (proof as string).length < 1000) throw new UserError("proof must be hex");
+  const id = clientId(body["id"]);
+  if (id) {
+    // a retry after a timeout: answer before the fee check, which a gas rise since the first call could now fail
+    const prior = await rpc<RelayRow | null>("dark_relay_status", { p_client_id: id });
+    if (prior) return { tx: prior.tx };
+  }
 
   if (body["kind"] === "transact") {
     const t = (body["transaction"] ?? {}) as Record<string, unknown>;
@@ -175,7 +239,7 @@ export async function relay(body: Record<string, unknown>) {
     };
     if (transaction.asset !== ZeroAddress) throw new UserError("the relayer takes ETH transactions only (its fee is paid in the note's asset)");
     const quote = await checkFee("transact", transaction.relayer, transaction.fee);
-    return submit("transact", transaction.fee, quote, "transact", [Object.values(transaction), proof, hexBytes(body["memo"] ?? "0x", "memo", 8_192)]);
+    return submit("transact", transaction.fee, quote, "transact", [Object.values(transaction), proof, hexBytes(body["memo"] ?? "0x", "memo", 8_192)], id);
   }
 
   if (body["kind"] === "order") {
@@ -191,7 +255,7 @@ export async function relay(body: Record<string, unknown>) {
       fee: uint(p["fee"], "fee"),
     };
     const quote = await checkFee("order", placement.relayer, placement.fee);
-    return submit("order", placement.fee, quote, "placeOrder", [address(body["asset"], "asset"), Object.values(placement), proof, hexBytes(body["sealedOrder"], "sealedOrder", 16_384)]);
+    return submit("order", placement.fee, quote, "placeOrder", [address(body["asset"], "asset"), Object.values(placement), proof, hexBytes(body["sealedOrder"], "sealedOrder", 16_384)], id);
   }
 
   throw new UserError('kind must be "transact" or "order"');
