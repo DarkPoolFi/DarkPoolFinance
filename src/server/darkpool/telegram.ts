@@ -377,7 +377,7 @@ export async function sendSettlementPings(
     await io.done(p.epoch);
     pinged.push(p.epoch);
   }
-  return pinged.length ? { pinged, sent, ...(failed ? { failed } : {}) } : { idle: true, waiting: pending.length };
+  return pinged.length ? { pinged, sent, ...(failed ? { failed } : {}) } : { idle: true, pending: pending.length }; // not "waiting": the cron log reads that as a stalled step
 }
 
 /** The command menu Telegram shows, per language (set by scripts/telegram-setup.ts). */

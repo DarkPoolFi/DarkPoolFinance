@@ -135,7 +135,7 @@ process.env["TELEGRAM_BOT_TOKEN"] = "test";
 const W = 5_965_816;
 const end = (W + 1) * 300;
 let r = await sendSettlementPings(end - 1, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: false, abandoned: false }]));
-assert.deepEqual([r, out, done], [{ idle: true, waiting: 1 }, [], []], "nothing before the window ends");
+assert.deepEqual([r, out, done], [{ idle: true, pending: 1 }, [], []], "nothing before the window ends, and the step still reads as ok");
 r = await sendSettlementPings(end + 30, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: true, abandoned: false }]));
 assert.deepEqual(out, [], "a market still settling holds the ping");
 r = await sendSettlementPings(end + 90, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }, { chat: 2, lang: "zh" }, { chat: 666, lang: "en" }], open: false, abandoned: false }]));
