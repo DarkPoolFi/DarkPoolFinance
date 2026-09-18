@@ -81,7 +81,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (url.pathname === "/api/pool") return ok({ pool: visible.pool, tree: { size: visible.leaves, queued: visible.leaves, root: "0x0" } });
   if (url.pathname === "/api/pool/leaves") return ok({ leaves: leaves.slice(Number(url.searchParams.get("from")), visible.leaves).map(hexOf) });
   const after = Number(url.searchParams.get("after"));
-  return ok({ events: shown.filter((e) => e.block > after) });
+  const afterLog = Number(url.searchParams.get("afterLog"));
+  return ok({ events: shown.filter((e) => e.block > after || (e.block === after && e.log_index > afterLog)) });
 }) as typeof fetch;
 
 const snap = (d: { pool: string; leaves: bigint[]; events: PoolEvent[] }): PoolSnapshot => ({ pool: d.pool, leaves: d.leaves, events: d.events });
@@ -98,7 +99,7 @@ const s2 = await loadPool("", snap(s1));
 visible = { events: events.length, leaves: leaves.length, pool: POOL };
 requests.length = 0;
 const s3 = await loadPool("", snap(s2));
-assert.ok(requests.some((r) => r === `/api/pool/leaves?from=5`) && requests.some((r) => r.endsWith("after=102")), `fetches only from the last known leaf and block: ${requests.join(" ")}`);
+assert.ok(requests.some((r) => r === `/api/pool/leaves?from=5`) && requests.some((r) => r.includes("after=102&afterLog=2147483647")), `fetches only from the last known leaf and block: ${requests.join(" ")}`);
 const full = await loadPool("", null);
 same(s3, full, "staged load equals a full load");
 assert.equal(new Set(s3.events.map((e) => e.tx_hash)).size, s3.events.length, "the re-read block brings no duplicates");

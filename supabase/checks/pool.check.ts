@@ -1,5 +1,6 @@
 // bun supabase/checks/pool.check.ts
-// Shielded pool mirror SQL (0008, open windows as rewritten in 0017) in PGlite: idempotent event recording with the cursor, leaf order and gap stats,
+// Shielded pool mirror SQL (0008, open windows as rewritten in 0017, the event cursor in 0019) in PGlite: idempotent event
+// recording with the cursor, leaf order and gap stats,
 // open windows in slot order with sealed / settled / abandoned status, operator openings, lockdown.
 import { PGlite } from "@electric-sql/pglite";
 import assert from "node:assert/strict";
@@ -7,7 +8,7 @@ import { readFileSync } from "node:fs";
 
 const db = new PGlite();
 await db.exec(`create role anon; create role authenticated; create role service_role; create schema auth; create table auth.users (id uuid primary key);`);
-for (const f of ["0001_darkpool_core.sql", "0002_darkpool_auth.sql", "0003_darkpool_funding.sql", "0004_darkpool_venue.sql", "0005_darkpool_withdrawals.sql", "0006_darkpool_vault.sql", "0007_darkpool_ops.sql", "0008_darkpool_pool.sql", "0008_darkpool_pool.sql", "0009_darkpool_cutoff.sql", "0010_darkpool_pool_v3.sql", "0017_darkpool_event_indexes.sql", "0017_darkpool_event_indexes.sql"]) {
+for (const f of ["0001_darkpool_core.sql", "0002_darkpool_auth.sql", "0003_darkpool_funding.sql", "0004_darkpool_venue.sql", "0005_darkpool_withdrawals.sql", "0006_darkpool_vault.sql", "0007_darkpool_ops.sql", "0008_darkpool_pool.sql", "0008_darkpool_pool.sql", "0009_darkpool_cutoff.sql", "0010_darkpool_pool_v3.sql", "0017_darkpool_event_indexes.sql", "0017_darkpool_event_indexes.sql", "0019_darkpool_event_cursor.sql", "0019_darkpool_event_cursor.sql"]) {
   await db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
 }
 const q = async (sql: string, params: unknown[] = []) => (await db.query<Record<string, any>>(sql, params)).rows;
@@ -61,13 +62,21 @@ await record([ev("0xT6", 0, 15, "WindowSettled", { asset: A, epoch: "5", notes: 
 assert.deepEqual(await val(`select dark_pool_open_windows()`), [], "settled and abandoned windows drop out");
 
 const named = await val(`select dark_pool_events(array['WindowSettled', 'Committed'], $1)`, [B + 11]);
-assert.deepEqual(named.map((e: any) => [e.block - B, e.name]), [[13, "Committed"], [15, "WindowSettled"]]);
+assert.deepEqual(named.map((e: any) => [e.block - B, e.name]), [[13, "Committed"], [15, "WindowSettled"]], "a block alone still resumes after that whole block");
+
+// TU-19: a page that cut inside block 10 (logs 1, 2 and 3) must be able to resume at its tail.
+const mid = await val(`select dark_pool_events(array['OrderResting', 'Committed'], $1, $2)`, [B + 10, 1]);
+assert.deepEqual(
+  mid.map((e: any) => [e.block - B, e.log_index]),
+  [[10, 2], [10, 3], [11, 0], [12, 0], [13, 0]],
+  "the rest of a split block comes back",
+);
 
 await q(`select dark_pool_put_openings($1::jsonb)`, [JSON.stringify([{ commitment: "0xABC", sealed: "first" }])]);
 await q(`select dark_pool_put_openings($1::jsonb)`, [JSON.stringify([{ commitment: "0xabc", sealed: "second" }])]);
 assert.deepEqual(await val(`select dark_pool_openings(array['0xAbC', '0xdef'])`), { "0xabc": "first" }, "first opening kept, lookups case-insensitive");
 
-for (const fn of ["dark_pool_record(jsonb,bigint)", "dark_pool_events(text[],bigint,integer)", "dark_pool_leaves(bigint,integer)", "dark_pool_leaf_stats()", "dark_pool_open_windows()", "dark_pool_put_openings(jsonb)", "dark_pool_openings(text[])"]) {
+for (const fn of ["dark_pool_record(jsonb,bigint)", "dark_pool_events(text[],bigint,integer,integer)", "dark_pool_leaves(bigint,integer)", "dark_pool_leaf_stats()", "dark_pool_open_windows()", "dark_pool_put_openings(jsonb)", "dark_pool_openings(text[])"]) {
   assert.equal(await val(`select has_function_privilege('anon', $1, 'execute')`, [fn]), false, `${fn} exposed to anon`);
   assert.equal(await val(`select has_function_privilege('service_role', $1, 'execute')`, [fn]), true, `${fn} not granted to service_role`);
 }

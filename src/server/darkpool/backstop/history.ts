@@ -97,13 +97,17 @@ export function spreadIncome(leg: { sold: bigint; ethIn: bigint; bought: bigint;
   return leg.ethIn - fair(leg.sold) + (fair(leg.bought) - leg.ethOut);
 }
 
+// Past every log index, so the first page starts before everything and a cursor at a block's last log resumes at the
+// next block. Pages carry (block, log_index) together: a block split across pages used to lose its tail (TU-19).
+const LAST_LOG = 2_147_483_647;
+
 async function poolEvents(names: string[]) {
   const out: PoolEvent[] = [];
-  for (let after = -1; ; ) {
-    const page = await rpc<PoolEvent[]>("dark_pool_events", { p_names: names, p_after_block: after, p_limit: 5_000 });
+  for (let block = -1, log = LAST_LOG; ; ) {
+    const page = await rpc<PoolEvent[]>("dark_pool_events", { p_names: names, p_after_block: block, p_after_log: log, p_limit: 5_000 });
     out.push(...page);
     if (page.length < 5_000) break;
-    after = page[page.length - 1]!.block; // ponytail: a block split across pages loses its tail; fine at backstop volume (TU-19)
+    ({ block, log_index: log } = page[page.length - 1]!);
   }
   return out;
 }

@@ -130,14 +130,19 @@ export async function loadPool<C>(base = "", prev: PoolSnapshot | null = null) {
   return { config, pool, leaves, events };
 }
 
+const PAGE = 5_000;
+/** Past every log index: a cursor at (block, LAST_LOG) resumes at the next block, so `from` means a whole block. */
+export const LAST_LOG = 2_147_483_647;
+
 export async function loadEvents(get: <T>(path: string) => Promise<T>, names: string[], from = -1) {
-  const seen = new Set<string>();
   const events: PoolEvent[] = [];
-  for (let after = from; ; ) {
-    const page = await get<{ events: PoolEvent[] }>(`/api/pool/events?names=${names.join(",")}&after=${after}`);
-    for (const e of page.events) if (!seen.has(`${e.tx_hash}:${e.log_index}`)) seen.add(`${e.tx_hash}:${e.log_index}`) && events.push(e);
-    if (page.events.length < 5_000) break;
-    after = page.events[page.events.length - 1]!.block - 1; // re-reads the last block; duplicates are dropped
+  // Cursor is the last row's (block, log_index), never the block alone: a page that cuts inside a block used to skip
+  // the rest of it for good (TU-19).
+  for (let block = from, log = LAST_LOG; ; ) {
+    const page = await get<{ events: PoolEvent[] }>(`/api/pool/events?names=${names.join(",")}&after=${block}&afterLog=${log}`);
+    events.push(...page.events);
+    if (page.events.length < PAGE) break;
+    ({ block, log_index: log } = page.events[page.events.length - 1]!);
   }
   return events.sort((a, b) => a.block - b.block || a.log_index - b.log_index);
 }
