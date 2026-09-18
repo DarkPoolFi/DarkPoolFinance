@@ -26,6 +26,7 @@ import { Route as ApiPoolRouteImport } from './routes/api/pool'
 import { Route as ApiRfqRouteImport } from './routes/api/rfq'
 import { Route as ApiSolvencyRouteImport } from './routes/api/solvency'
 import { Route as ApiTapeRouteImport } from './routes/api/tape'
+import { Route as ApiTelegramRouteImport } from './routes/api/telegram'
 import { Route as ApiTransparencyRouteImport } from './routes/api/transparency'
 import { Route as ApiVenueRouteImport } from './routes/api/venue'
 import { Route as ApiWithdrawalsRouteImport } from './routes/api/withdrawals'
@@ -130,6 +131,11 @@ const ApiSolvencyRoute = ApiSolvencyRouteImport.update({
 const ApiTapeRoute = ApiTapeRouteImport.update({
   id: '/api/tape',
   path: '/api/tape',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTelegramRoute = ApiTelegramRouteImport.update({
+  id: '/api/telegram',
+  path: '/api/telegram',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTransparencyRoute = ApiTransparencyRouteImport.update({
@@ -252,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/api/rfq': typeof ApiRfqRoute
   '/api/solvency': typeof ApiSolvencyRoute
   '/api/tape': typeof ApiTapeRoute
+  '/api/telegram': typeof ApiTelegramRoute
   '/api/transparency': typeof ApiTransparencyRoute
   '/api/venue': typeof ApiVenueRoute
   '/api/withdrawals': typeof ApiWithdrawalsRoute
@@ -291,6 +298,7 @@ export interface FileRoutesByTo {
   '/api/rfq': typeof ApiRfqRoute
   '/api/solvency': typeof ApiSolvencyRoute
   '/api/tape': typeof ApiTapeRoute
+  '/api/telegram': typeof ApiTelegramRoute
   '/api/transparency': typeof ApiTransparencyRoute
   '/api/venue': typeof ApiVenueRoute
   '/api/withdrawals': typeof ApiWithdrawalsRoute
@@ -331,6 +339,7 @@ export interface FileRoutesById {
   '/api/rfq': typeof ApiRfqRoute
   '/api/solvency': typeof ApiSolvencyRoute
   '/api/tape': typeof ApiTapeRoute
+  '/api/telegram': typeof ApiTelegramRoute
   '/api/transparency': typeof ApiTransparencyRoute
   '/api/venue': typeof ApiVenueRoute
   '/api/withdrawals': typeof ApiWithdrawalsRoute
@@ -372,6 +381,7 @@ export interface FileRouteTypes {
     | '/api/rfq'
     | '/api/solvency'
     | '/api/tape'
+    | '/api/telegram'
     | '/api/transparency'
     | '/api/venue'
     | '/api/withdrawals'
@@ -411,6 +421,7 @@ export interface FileRouteTypes {
     | '/api/rfq'
     | '/api/solvency'
     | '/api/tape'
+    | '/api/telegram'
     | '/api/transparency'
     | '/api/venue'
     | '/api/withdrawals'
@@ -450,6 +461,7 @@ export interface FileRouteTypes {
     | '/api/rfq'
     | '/api/solvency'
     | '/api/tape'
+    | '/api/telegram'
     | '/api/transparency'
     | '/api/venue'
     | '/api/withdrawals'
@@ -490,6 +502,7 @@ export interface RootRouteChildren {
   ApiRfqRoute: typeof ApiRfqRoute
   ApiSolvencyRoute: typeof ApiSolvencyRoute
   ApiTapeRoute: typeof ApiTapeRoute
+  ApiTelegramRoute: typeof ApiTelegramRoute
   ApiTransparencyRoute: typeof ApiTransparencyRoute
   ApiVenueRoute: typeof ApiVenueRoute
   ApiWithdrawalsRoute: typeof ApiWithdrawalsRoute
@@ -631,6 +644,13 @@ declare module '@tanstack/react-router' {
       path: '/api/tape'
       fullPath: '/api/tape'
       preLoaderRoute: typeof ApiTapeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/telegram': {
+      id: '/api/telegram'
+      path: '/api/telegram'
+      fullPath: '/api/telegram'
+      preLoaderRoute: typeof ApiTelegramRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/transparency': {
@@ -794,6 +814,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiRfqRoute: ApiRfqRoute,
   ApiSolvencyRoute: ApiSolvencyRoute,
   ApiTapeRoute: ApiTapeRoute,
+  ApiTelegramRoute: ApiTelegramRoute,
   ApiTransparencyRoute: ApiTransparencyRoute,
   ApiVenueRoute: ApiVenueRoute,
   ApiWithdrawalsRoute: ApiWithdrawalsRoute,

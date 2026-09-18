@@ -1,0 +1,305 @@
+// Telegram bot (telegram_tech_update.md TG-0 / TG-1). Answers public commands from the same public endpoints the site
+// reads, so every answer matches the dashboard. It never asks for, holds or receives keys, signatures or wallets, and
+// shows nothing before the site does: no current-window order counts, the tape keeps its delay.
+import { createHash, timingSafeEqual } from "node:crypto";
+import { formatUnits } from "ethers";
+import { FEE_NOTE_ORDERS } from "@/shielded/orders";
+import { WINDOW_SECONDS } from "@/shielded/protocol";
+
+const SITE = "https://darkpoolfi.tech";
+const DARK = "0x073407b2ba247e88a3183849ec2817512171d7ef";
+const EXPLORER = "https://robinhoodchain.blockscout.com/address/";
+
+const digest = (s: string) => createHash("sha256").update(s).digest();
+
+/** Telegram sends the webhook secret set with setWebhook in this header. Nothing else is trusted. */
+export function isTelegramAuthorized(request: Request): boolean {
+  const secret = process.env["TELEGRAM_WEBHOOK_SECRET"]?.trim();
+  if (!secret) return false;
+  return timingSafeEqual(digest(request.headers.get("x-telegram-bot-api-secret-token") ?? ""), digest(secret));
+}
+
+/** Calls the Bot API. Throws on a refusal, so callers decide whether that matters. */
+export async function telegram(method: string, body: Record<string, unknown>) {
+  const token = process.env["TELEGRAM_BOT_TOKEN"]?.trim();
+  if (!token) throw Error("Missing env TELEGRAM_BOT_TOKEN");
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const out = (await res.json().catch(() => null)) as { ok?: boolean; description?: string; result?: unknown } | null;
+  if (!out?.ok) throw Error(`Telegram ${method}: ${out?.description ?? res.status}`);
+  return out.result;
+}
+
+export type Lang = "en" | "zh";
+/** Reads one of the site's public endpoints (`/api/venue` …) and returns its `data`. */
+export type Load = (path: string) => Promise<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+/** A Load that reads this deployment's own endpoints, each kept for 15 s so a busy chat does not hammer them. */
+export function siteLoader(origin: string): Load {
+  return async (path) => {
+    const hit = cache.get(path);
+    if (hit && Date.now() - hit.at < 15_000) return hit.data;
+    const body = (await fetch(origin + path).then((r) => r.json())) as { ok?: boolean; data?: unknown };
+    if (!body?.ok) throw Error(`${path} failed`);
+    cache.set(path, { at: Date.now(), data: body.data });
+    return body.data;
+  };
+}
+const cache = new Map<string, { at: number; data: unknown }>();
+
+const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const usd = (micro: string | number) => `$${(Number(micro) / 1e6).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const eth = (wei: string | bigint) => String(Number(formatUnits(wei, 18)).toPrecision(4)).replace(/\.?0+$/, "");
+const units = (raw: string, decimals: number) => String(Number(formatUnits(raw, decimals)).toPrecision(6)).replace(/\.?0+$/, "");
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const utc = (unix: number) => new Date(unix * 1000).toISOString().slice(11, 16) + " UTC";
+const ago = (iso: string) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+
+const C = {
+  en: {
+    start: [
+      "<b>DarkpoolFi</b> · sealed stock orders on Robinhood Chain.",
+      "Orders stay sealed until the window crosses, then everyone in it fills at the same Chainlink reference.",
+      "",
+      "/window · the crossing window now",
+      "/price AAPL · a reference price",
+      "/markets · every market",
+      "/tape · the delayed public tape",
+      "/solvency · reserves against what is owed",
+      "/fees · venue and relayer fees",
+      "/dark · the DARK token",
+      "/howto · how to trade privately",
+      "",
+      "🔒 This bot never asks for your seed phrase, keys or a signature, and cannot trade for you. Anyone who does is not us.",
+    ],
+    unknown: "I don't know that command. /help lists what I can do.",
+    window: (n: number, left: number, closes: number) => [
+      `<b>Window ${n}</b> · collecting`,
+      `Closes in ${clock(left)} (${utc(closes)}). An order sealed now joins this window.`,
+      "",
+      `Window ${n - 1} is crossing: its reference price is sealed from Chainlink and it settles shortly.`,
+      "Orders, sides and sizes are never shown before the cross.",
+    ],
+    priceUsage: (list: string) => `Which market? For example /price AAPL. Markets: ${list}`,
+    noMarket: (s: string, list: string) => `No market called ${s}. Markets: ${list}`,
+    price: (sym: string, name: string, price: string, min: number, band: string, halted: boolean, stale: boolean) => [
+      `<b>${sym}</b> · ${name}`,
+      `Reference: <b>${price}</b> (Chainlink, ${min} min ago)`,
+      `Interest: ${band}`,
+      ...(halted ? ["⚠️ Halted: orders wait until the market reopens."] : []),
+      ...(stale ? ["⚠️ The reference is stale: windows seal only on a fresh price."] : []),
+    ],
+    markets: "<b>Markets</b> · reference · interest · backstop",
+    market: (sym: string, price: string, band: string, depth: string, spread: string) => `<b>${sym}</b> ${price} · ${band} · ${depth} ETH at ±${spread}%`,
+    ethUsd: (p: string) => `ETH/USD ${p}`,
+    tape: (hours: number) => `<b>Public tape</b> · delayed ${hours} h, past windows only`,
+    tapeRow: (sym: string, w: string, cross: string) => `${sym} · window ${w} · ${cross}`,
+    crossed: (q: string, p: string) => `crossed ${q} at ${p}`,
+    noCross: "no cross",
+    tapeEmpty: "No delayed results yet. A completed cross appears after the delay.",
+    solvency: "<b>Solvency</b> · what the pool holds against what it owes",
+    solvencyRow: (sym: string, held: string, owed: string, ok: boolean) => `${ok ? "✅" : "⚠️"} ${sym} · held ${held} · owed ${owed}`,
+    allCovered: (ok: boolean) => (ok ? "Everything is covered." : "⚠️ Something is not covered. Details on the Transparency page."),
+    signed: (at: string) => `Signed report, ${at}. Verify it at ${SITE}/transparency`,
+    fees: (feeBps: number, order: string, transact: string, note: string, deposit: string) => [
+      "<b>Fees</b>",
+      `Venue: ${(feeBps / 100).toFixed(2)}% of each fill`,
+      `Deposit: ${deposit} ETH`,
+      `Relayed order: ${order} ETH`,
+      `Relayed withdraw, send or merge: ${transact} ETH`,
+      `Fee note (covers ${FEE_NOTE_ORDERS} orders): ${note} ETH`,
+      "",
+      "Relayer fees follow gas and change. Submitting from your own wallet skips them, but links the transaction to it.",
+    ],
+    dark: [
+      "<b>$DARK</b> · DarkpoolFi token on Robinhood Chain",
+      `Contract: <code>${DARK}</code>`,
+      `${EXPLORER}${DARK}`,
+      "Always check the address. We never DM first.",
+    ],
+    howto: [
+      "<b>Trading privately on DarkpoolFi</b>",
+      "1. <b>Deposit</b> ETH or a stock token into the shielded pool. This is the only step that shows your wallet.",
+      "2. <b>Seal</b> an order. Your browser proves it is backed by your funds; the relayer submits it, so it is not linked to you.",
+      "3. <b>Wait</b> for the window to close (5 minutes). Nobody sees orders, sides or sizes.",
+      "4. <b>Cross</b>: everyone in the window fills at the same Chainlink reference.",
+      "5. <b>Settle</b>: your fill and any refund arrive as notes only your keys can read. Withdraw to any address.",
+      "",
+      `Start: ${SITE}/dashboard · Docs: ${SITE}/docs`,
+    ],
+    error: "The data is not available right now. Try again in a minute.",
+  },
+  zh: {
+    start: [
+      "<b>DarkpoolFi</b> · Robinhood Chain 上的密封股票订单。",
+      "订单在窗口撮合前始终密封，撮合时窗口内所有人按同一 Chainlink 参考价成交。",
+      "",
+      "/window · 当前撮合窗口",
+      "/price AAPL · 参考价格",
+      "/markets · 全部市场",
+      "/tape · 延迟公开成交记录",
+      "/solvency · 储备与应付对比",
+      "/fees · 场所费与中继费",
+      "/dark · DARK 代币",
+      "/howto · 如何私密交易",
+      "",
+      "🔒 本机器人绝不会索要你的助记词、密钥或签名，也不能替你交易。凡是索要的都不是我们。",
+    ],
+    unknown: "我不认识这个命令。/help 列出我能做的事。",
+    window: (n: number, left: number, closes: number) => [
+      `<b>窗口 ${n}</b> · 收集中`,
+      `${clock(left)} 后关闭（${utc(closes)}）。现在密封的订单会进入此窗口。`,
+      "",
+      `窗口 ${n - 1} 正在撮合：参考价已从 Chainlink 密封，很快结算。`,
+      "撮合前绝不显示订单、方向或数量。",
+    ],
+    priceUsage: (list: string) => `哪个市场？例如 /price AAPL。市场：${list}`,
+    noMarket: (s: string, list: string) => `没有名为 ${s} 的市场。市场：${list}`,
+    price: (sym: string, name: string, price: string, min: number, band: string, halted: boolean, stale: boolean) => [
+      `<b>${sym}</b> · ${name}`,
+      `参考价：<b>${price}</b>（Chainlink，${min} 分钟前）`,
+      `活跃度：${band}`,
+      ...(halted ? ["⚠️ 已暂停：订单将等待市场重新开放。"] : []),
+      ...(stale ? ["⚠️ 参考价已过时：只有价格新鲜时窗口才会密封。"] : []),
+    ],
+    markets: "<b>市场</b> · 参考价 · 活跃度 · 后备流动性",
+    market: (sym: string, price: string, band: string, depth: string, spread: string) => `<b>${sym}</b> ${price} · ${band} · ${depth} ETH，价差 ±${spread}%`,
+    ethUsd: (p: string) => `ETH/USD ${p}`,
+    tape: (hours: number) => `<b>公开成交记录</b> · 延迟 ${hours} 小时，仅限已结束窗口`,
+    tapeRow: (sym: string, w: string, cross: string) => `${sym} · 窗口 ${w} · ${cross}`,
+    crossed: (q: string, p: string) => `以 ${p} 撮合 ${q}`,
+    noCross: "未撮合",
+    tapeEmpty: "暂无延迟结果。已完成的撮合会在延迟期后显示。",
+    solvency: "<b>偿付能力</b> · 资金池持有与应付对比",
+    solvencyRow: (sym: string, held: string, owed: string, ok: boolean) => `${ok ? "✅" : "⚠️"} ${sym} · 持有 ${held} · 应付 ${owed}`,
+    allCovered: (ok: boolean) => (ok ? "全部足额覆盖。" : "⚠️ 有资产未足额覆盖，详见透明度页面。"),
+    signed: (at: string) => `已签名报告，${at}。在 ${SITE}/transparency 验证`,
+    fees: (feeBps: number, order: string, transact: string, note: string, deposit: string) => [
+      "<b>费用</b>",
+      `场所费：每笔成交的 ${(feeBps / 100).toFixed(2)}%`,
+      `存入：${deposit} ETH`,
+      `中继订单：${order} ETH`,
+      `中继提取、发送或合并：${transact} ETH`,
+      `手续费票据（可支付 ${FEE_NOTE_ORDERS} 笔订单）：${note} ETH`,
+      "",
+      "中继费随 gas 变化。用你自己的钱包提交可免中继费，但交易会与钱包关联。",
+    ],
+    dark: [
+      "<b>$DARK</b> · Robinhood Chain 上的 DarkpoolFi 代币",
+      `合约：<code>${DARK}</code>`,
+      `${EXPLORER}${DARK}`,
+      "请务必核对地址。我们从不主动私信。",
+    ],
+    howto: [
+      "<b>在 DarkpoolFi 私密交易</b>",
+      "1. <b>存入</b> ETH 或股票代币到隐私池。这是唯一会显示你钱包的步骤。",
+      "2. <b>密封</b> 订单。浏览器证明订单有你的资金支持；由中继提交，因此不会与你关联。",
+      "3. <b>等待</b> 窗口关闭（5 分钟）。无人能看到订单、方向或数量。",
+      "4. <b>撮合</b>：窗口内所有人按同一 Chainlink 参考价成交。",
+      "5. <b>结算</b>：成交与退款以只有你的密钥能读取的票据到账。可提取到任意地址。",
+      "",
+      `开始：${SITE}/dashboard · 文档：${SITE}/docs`,
+    ],
+    error: "暂时无法获取数据。请一分钟后再试。",
+  },
+};
+const BANDS: Record<string, string> = { Thin: "低", Balanced: "均衡", Active: "活跃" };
+
+/**
+ * The reply to one message, or null when the bot should stay quiet (plain chat in a group). `now` is unix seconds.
+ * Commands may carry the bot's name (`/price@DarkpoolFiBot AAPL`) and any case.
+ */
+export async function botReply(text: string, lang: Lang, load: Load, isPrivate: boolean, now = Date.now() / 1000): Promise<string | null> {
+  const [head = "", arg = ""] = text.trim().split(/\s+/);
+  if (!head.startsWith("/")) return isPrivate ? C[lang].start.join("\n") : null;
+  const cmd = head.slice(1).split("@")[0]!.toLowerCase();
+  const c = C[lang];
+  const band = (b: string) => (lang === "zh" ? (BANDS[b] ?? b) : b);
+  try {
+    switch (cmd) {
+      case "start":
+      case "help":
+        return c.start.join("\n");
+      case "window": {
+        const n = Math.floor(now / WINDOW_SECONDS);
+        const closes = (n + 1) * WINDOW_SECONDS;
+        return c.window(n, closes - now, closes).join("\n");
+      }
+      case "price": {
+        const venue = await load("/api/venue");
+        const list = venue.assets.map((a: { symbol: string }) => a.symbol).join(", ");
+        if (!arg) return c.priceUsage(list);
+        const a = venue.assets.find((x: { symbol: string }) => x.symbol === arg.toUpperCase());
+        if (!a) return c.noMarket(esc(arg.toUpperCase()), list);
+        return c.price(a.symbol, esc(a.name), usd(a.ref_usd), ago(a.ref_updated_at), band(a.band), a.halted, a.ref_status !== "ok").join("\n");
+      }
+      case "markets": {
+        const [venue, backstop] = await Promise.all([load("/api/venue"), load("/api/backstop")]);
+        const books = new Map<string, { valueWei: string; spreadBps: number }>(backstop.books.map((b: { symbol: string }) => [b.symbol, b]));
+        const rows = venue.assets.map((a: { symbol: string; ref_usd: string; band: string }) => {
+          const b = books.get(a.symbol);
+          return c.market(a.symbol, usd(a.ref_usd), band(a.band), eth(b?.valueWei ?? "0"), ((b?.spreadBps ?? 0) / 100).toFixed(2));
+        });
+        return [c.markets, ...rows, "", c.ethUsd(usd(venue.eth_usd.usd))].join("\n");
+      }
+      case "tape": {
+        const [venue, tape] = await Promise.all([load("/api/venue"), load("/api/tape")]);
+        const rows = (tape as { symbol: string; window_id: string; status: string; matched_qty: string; ref_usd: string }[])
+          .slice(0, 10)
+          .map((t) => c.tapeRow(t.symbol, t.window_id, t.status === "crossed" ? c.crossed(units(t.matched_qty, 6), usd(t.ref_usd)) : c.noCross));
+        return [c.tape(Math.round(venue.config.tape_delay_seconds / 3600)), ...(rows.length ? rows : [c.tapeEmpty])].join("\n");
+      }
+      case "solvency": {
+        const { report } = await load("/api/solvency");
+        const assets = (report.shielded?.assets ?? []) as { symbol: string; decimals: number; expected: string; onChain: string; covered: boolean }[];
+        const shown = assets.filter((a) => a.expected !== "0" || a.onChain !== "0");
+        const allOk = assets.every((a) => a.covered) && report.x0?.allCovered !== false;
+        const rows = shown.map((a) => c.solvencyRow(a.symbol, units(a.onChain, a.decimals), units(a.expected, a.decimals), a.covered));
+        return [c.solvency, ...rows, c.allCovered(allOk), "", c.signed(esc(String(report.generatedAt).slice(0, 16).replace("T", " ")) + " UTC")].join("\n");
+      }
+      case "fees": {
+        const pool = await load("/api/pool");
+        const order = BigInt(pool.relayFees.orderWei);
+        return c.fees(pool.feeBps, eth(order), eth(pool.relayFees.transactWei), eth(order * FEE_NOTE_ORDERS), eth(pool.depositFeeWei)).join("\n");
+      }
+      case "dark":
+        return c.dark.join("\n");
+      case "howto":
+        return c.howto.join("\n");
+      default:
+        return isPrivate ? c.unknown : null;
+    }
+  } catch (e) {
+    console.error("telegram command failed", cmd, String(e));
+    return c.error;
+  }
+}
+
+/** The command menu Telegram shows, per language (set by scripts/telegram-setup.ts). */
+export const COMMANDS: Record<Lang, { command: string; description: string }[]> = {
+  en: [
+    { command: "window", description: "The crossing window now" },
+    { command: "price", description: "A reference price, e.g. /price AAPL" },
+    { command: "markets", description: "Every market" },
+    { command: "tape", description: "The delayed public tape" },
+    { command: "solvency", description: "Reserves against what is owed" },
+    { command: "fees", description: "Venue and relayer fees" },
+    { command: "dark", description: "The DARK token" },
+    { command: "howto", description: "How to trade privately" },
+    { command: "help", description: "What this bot does" },
+  ],
+  zh: [
+    { command: "window", description: "当前撮合窗口" },
+    { command: "price", description: "参考价格，例如 /price AAPL" },
+    { command: "markets", description: "全部市场" },
+    { command: "tape", description: "延迟公开成交记录" },
+    { command: "solvency", description: "储备与应付对比" },
+    { command: "fees", description: "场所费与中继费" },
+    { command: "dark", description: "DARK 代币" },
+    { command: "howto", description: "如何私密交易" },
+    { command: "help", description: "机器人功能" },
+  ],
+};
