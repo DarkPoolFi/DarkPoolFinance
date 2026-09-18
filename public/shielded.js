@@ -240,6 +240,7 @@ async function publishActivity(rows) {
     tx: r.tx,
     feeEth: r.feeEth,
     priceUsd: r.priceUsd,
+    realisedEth: r.realisedEth,
     window: null,
   }));
   window.darkpoolRenderActivity?.();

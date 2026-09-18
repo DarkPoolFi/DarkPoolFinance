@@ -56,6 +56,7 @@ export interface Activity {
   tx: string;
   feeWei?: bigint; // ETH this line paid: the relayer fee of a relayed transaction or order, the settlement fee of a fill
   priceUsd?: bigint; // fills: average price per token before fees, micro-USD (legs at the reference and at the backstop's spread)
+  fill?: { asset: bigint; buy: boolean; qty: bigint; eth: bigint; fee: bigint }; // fills: the settled result in micro-units, for PnL
 }
 
 /** What the owner keeps about an order inside its sealed envelope (`u`), to rebuild it and its change notes anywhere. */
@@ -168,7 +169,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
   const orders: MyOrder[] = [];
   const activity: Activity[] = [];
   const used = new Set<number>();
-  const log = (e: PoolEvent, type: string, detail: string, asset: bigint, amount: bigint | null, extra: Pick<Activity, "feeWei" | "priceUsd"> = {}) =>
+  const log = (e: PoolEvent, type: string, detail: string, asset: bigint, amount: bigint | null, extra: Pick<Activity, "feeWei" | "priceUsd" | "fill"> = {}) =>
     activity.push({ type, detail, asset, amount, block: e.block, tx: e.tx_hash, ...extra });
   // a relayed order's fee is its own event in the same transaction; a window's ETH/USD comes from its seal
   const orderFees = new Map(events.filter((x) => x.name === "OrderFeePaid").map((x) => [x.tx_hash, BigInt(x.args["fee"])]));
@@ -280,7 +281,7 @@ export async function rebuild(keys: ViewKeys, wallet: string, leaves: bigint[], 
         if (p.buy) add(o.asset, BigInt(r.qty) * unit(o.asset), blind(p.salt, 0n), p.label, "Fill");
         else add(ETH, (BigInt(r.eth) - BigInt(r.fee)) * ETH_UNIT, blind(p.salt, 0n), p.label, "Fill");
         const ethUsd = ethUsdOf.get(`${o.asset}:${o.epoch}`);
-        const fill = { feeWei: BigInt(r.fee) * ETH_UNIT, ...(ethUsd && BigInt(r.qty) > 0n ? { priceUsd: (BigInt(r.eth) * ethUsd) / BigInt(r.qty) } : {}) };
+        const fill = { feeWei: BigInt(r.fee) * ETH_UNIT, fill: { asset: o.asset, buy: p.buy, qty: BigInt(r.qty), eth: BigInt(r.eth), fee: BigInt(r.fee) }, ...(ethUsd && BigInt(r.qty) > 0n ? { priceUsd: (BigInt(r.eth) * ethUsd) / BigInt(r.qty) } : {}) };
         log(e, "Fill", `Window ${a["epoch"]} crossed${r.rolls ? "; the rest carries to the next window" : ""}.`, p.buy ? o.asset : ETH, p.buy ? BigInt(r.qty) * unit(o.asset) : (BigInt(r.eth) - BigInt(r.fee)) * ETH_UNIT, fill);
         if (!r.rolls) add(p.buy ? ETH : o.asset, BigInt(r.left) * (p.buy ? ETH_UNIT : unit(o.asset)), blind(p.salt, 1n), p.label, "Released lock");
         if (!r.rolls && BigInt(r.left) > 0n) log(e, "Released lock", "The unfilled part of the lock came back as a note.", p.buy ? ETH : o.asset, BigInt(r.left) * (p.buy ? ETH_UNIT : unit(o.asset)));

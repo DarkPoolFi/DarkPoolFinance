@@ -5,7 +5,7 @@ import { portfolio, type Fill } from "./pnl";
 
 const buy = (qty: bigint, eth: bigint, fee = 0n): Fill => ({ symbol: "AAPL", buy: true, qty, eth, fee });
 const sell = (qty: bigint, eth: bigint, fee = 0n): Fill => ({ symbol: "AAPL", buy: false, qty, eth, fee });
-const one = (fills: Fill[]) => portfolio(fills)[0]!;
+const one = (fills: Fill[]) => portfolio(fills).positions[0]!;
 
 // two buys at different prices average; a partial sell realises against the average
 let p = one([buy(100n, 1_000n), buy(100n, 3_000n), sell(50n, 1_500n)]);
@@ -36,6 +36,14 @@ assert.equal(p.cost, 0n);
 assert.equal(p.realised, 2n, "12 received − 10 paid, whatever the per-sell rounding");
 
 // markets are kept apart; empty fills are ignored
-const two = portfolio([buy(10n, 100n), { symbol: "TSLA", buy: true, qty: 5n, eth: 50n, fee: 0n }, buy(0n, 0n)]);
+const two = portfolio([buy(10n, 100n), { symbol: "TSLA", buy: true, qty: 5n, eth: 50n, fee: 0n }, buy(0n, 0n)]).positions;
 assert.deepEqual(two.map((x) => [x.symbol, x.position]), [["AAPL", 10n], ["TSLA", 5n]]);
+
+// the export's per-fill column reconciles: buys realise 0, each sell its own part, and the column sums to the total
+const month = [buy(100n, 1_000n, 10n), buy(50n, 900n), sell(30n, 700n, 7n), { symbol: "TSLA", buy: false, qty: 5n, eth: 60n, fee: 1n }, sell(120n, 2_000n, 20n)];
+const { positions, perFill } = portfolio(month);
+assert.deepEqual(perFill.slice(0, 2), [0n, 0n]);
+assert.equal(perFill[3], 0n, "TSLA sold with no position: nothing realised");
+assert.equal(perFill.reduce((a, b) => a + b, 0n), positions.reduce((a, p) => a + p.realised, 0n));
+assert.equal(perFill[2], 693n - 382n, "30 of 150 at avg 1910/150 = 382 basis, 700 − 7 received");
 console.log("pnl.check: ok");

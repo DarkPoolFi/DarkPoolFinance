@@ -808,6 +808,9 @@ export class ShieldedAccount {
     const assets: bigint[] = [ETH, ...this.config.markets.map((m) => BigInt(m.token))];
     const fmt = (asset: bigint, v: bigint) => formatUnits(v, this.decimalsOf(asset));
     const now = Date.now() / 1000;
+    const fills = this.activity.filter((r) => r.fill && r.fill.qty > 0n);
+    const pnl = portfolio(fills.map(({ fill: f }) => ({ symbol: this.symbol(f!.asset), buy: f!.buy, qty: f!.qty, eth: f!.eth, fee: f!.fee })));
+    const realisedBy = new Map(fills.map((r, i) => [r, pnl.perFill[i]!]));
     return {
       wallet: this.wallet,
       shieldedAddress: shieldedAddress(this.keys), // shown in the account panel, for someone else to pay
@@ -821,6 +824,7 @@ export class ShieldedAccount {
         tx: r.tx,
         feeEth: r.feeWei === undefined ? null : formatUnits(r.feeWei, 18),
         priceUsd: r.priceUsd === undefined ? null : formatUnits(r.priceUsd, 6),
+        realisedEth: r.fill && !r.fill.buy && realisedBy.has(r) ? formatUnits(realisedBy.get(r)!, 6) : null, // sells only; sums to pnl's realised
       })),
       relayFees: { transactEth: formatUnits(BigInt(this.config.relayFees.transactWei), 18), orderEth: formatUnits(BigInt(this.config.relayFees.orderWei), 18) },
       depositFeeEth: formatUnits(BigInt(this.config.depositFeeWei), 18),
@@ -829,12 +833,8 @@ export class ShieldedAccount {
       tree: this.config.tree,
       windowSeconds: this.config.windowSeconds, // the dashboard counts down a window's close and its reclaim deadline
       settleDeadlineSeconds: SETTLE_DEADLINE,
-      // average-cost PnL from settled fills, in ETH; the dashboard marks open positions at the current reference
-      pnl: portfolio(
-        this.orders
-          .filter((o) => o.result && BigInt(o.result.qty) > 0n)
-          .map((o) => ({ symbol: o.symbol, buy: o.opening.buy, qty: BigInt(o.result!.qty), eth: BigInt(o.result!.eth), fee: BigInt(o.result!.fee) })),
-      ).map((p) => ({
+      // average-cost PnL from settled fills, in chain order, in ETH; the dashboard marks open positions at the current reference
+      pnl: pnl.positions.map((p) => ({
         symbol: p.symbol,
         position: formatUnits(p.position, 6),
         costEth: formatUnits(p.cost, 6),
