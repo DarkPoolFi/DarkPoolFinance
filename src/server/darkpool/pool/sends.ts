@@ -90,6 +90,14 @@ export async function sendOperator(to: string, data: string, key: string | null 
 
 export const sendPool = (fn: string, args: unknown[], key: string | null = null) => sendOperator(poolAddress(), POOL_ABI.encodeFunctionData(fn, args), key);
 
+/** Keys of the operator sends still in flight, so a step can skip work (and its proof) whose send is already out. */
+export async function inFlightKeys() {
+  const op = operator();
+  const nonce = await provider().getTransactionCount(op.address, "latest");
+  const active = await rpc<ActiveSend[]>("dark_operator_sends_active", { p_wallet: op.address, p_chain_nonce: nonce });
+  return new Set(active.flatMap((s) => (s.key ? [s.key] : [])));
+}
+
 /** Re-broadcast, bump and unblock the operator's in-flight sends. Returns what it did and the oldest send's age. */
 export async function tendSends() {
   const p = provider();
