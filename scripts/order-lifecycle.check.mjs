@@ -69,4 +69,20 @@ assert.equal(clock(300), "5:00");
 assert.equal(clock(3600), "60:00");
 assert.equal(clock(-5), "0:00", "a passed deadline never shows a negative clock");
 
+// TG-5: the Telegram ping link is offered on open orders only, carrying just the window number
+const { orderRow } = new Function(
+  `const esc = (s) => String(s ?? '').replace(/[<>&"'\`]/g, '');
+   const STEPS = ['Sealed', 'Collecting', 'Crossing', 'Settled'];
+   const orderTiming = { windowSeconds: ${WINDOW}, settleDeadlineSeconds: ${DEADLINE} };
+   ${grab("TG_BOT", /const TG_BOT = .*/)}
+   ${grab("clock", /const clock = .*/)}
+   ${grab("orderStage", /function orderStage\([\s\S]*?\n\}/)}
+   ${grab("orderRow", /function orderRow\([\s\S]*?\n\}/)}
+   return { orderRow };`,
+)();
+const open = orderRow(order("open", { symbol: "AAPL", side: "buy" }), 3000);
+assert.match(open, /href="https:\/\/t\.me\/DarkPoolFi_bot\?start=w10"/);
+assert.match(open, /data-tg-ping="10"/);
+assert.doesNotMatch(orderRow(order("settled", { symbol: "AAPL", side: "buy" }), 7000), /t\.me/, "no link once settled");
+assert.doesNotMatch(orderRow(order("open", { symbol: "AAPL", side: "buy", reclaimable: true }), 7000), /t\.me/, "no link once only reclaim is left");
 console.log("order-lifecycle.check: ok");

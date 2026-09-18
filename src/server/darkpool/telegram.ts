@@ -5,10 +5,13 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { formatUnits } from "ethers";
 import { FEE_NOTE_ORDERS } from "@/shielded/orders";
 import { WINDOW_SECONDS } from "@/shielded/protocol";
+import { rpc } from "./db";
 
 const SITE = "https://darkpoolfi.tech";
 const DARK = "0x073407b2ba247e88a3183849ec2817512171d7ef";
 const EXPLORER = "https://robinhoodchain.blockscout.com/address/";
+const SETTLE_DEADLINE = 3_600; // DarkPoolShieldedPool.SETTLE_DEADLINE
+const MAX_PINGS = 20; // windows one chat can wait on at once
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
@@ -72,6 +75,7 @@ const C = {
       "/fees · venue and relayer fees",
       "/dark · the DARK token",
       "/howto · how to trade privately",
+      "/stop · cancel settlement pings",
       "",
       "🔒 This bot never asks for your seed phrase, keys or a signature, and cannot trade for you. Anyone who does is not us.",
     ],
@@ -131,6 +135,19 @@ const C = {
       `Start: ${SITE}/dashboard · Docs: ${SITE}/docs`,
     ],
     error: "The data is not available right now. Try again in a minute.",
+    pingOn: (n: number) => [
+      `🔔 Done. I'll message you here when window ${n} settles.`,
+      "",
+      "This tells DarkpoolFi that this Telegram account is waiting on that window, and nothing else: not your market, order, side, size or wallet.",
+      "/stop cancels every ping.",
+    ],
+    pingBad: "That is not a window an order can be waiting on now. Use the Telegram link on an order in the dashboard.",
+    pingFull: `You are already waiting on ${MAX_PINGS} windows. /stop clears them.`,
+    pingPrivate: "Pings only work in a private chat with me.",
+    stopped: (n: number) => (n ? `Settlement pings cancelled: ${n}.` : "You had no settlement pings waiting."),
+    settled: (n: number) => `🔔 Window ${n} has settled. Open the dashboard to see your fill: ${SITE}/dashboard`,
+    abandoned: (n: number) => `⚠️ Window ${n} closed without settling in at least one market. If your order was there, reclaim your lock in the dashboard: ${SITE}/dashboard`,
+    late: (n: number) => `⚠️ Window ${n} was not settled in time. If your order was there, you can reclaim your lock in the dashboard: ${SITE}/dashboard`,
   },
   zh: {
     start: [
@@ -145,6 +162,7 @@ const C = {
       "/fees · 场所费与中继费",
       "/dark · DARK 代币",
       "/howto · 如何私密交易",
+      "/stop · 取消结算提醒",
       "",
       "🔒 本机器人绝不会索要你的助记词、密钥或签名，也不能替你交易。凡是索要的都不是我们。",
     ],
@@ -204,6 +222,19 @@ const C = {
       `开始：${SITE}/dashboard · 文档：${SITE}/docs`,
     ],
     error: "暂时无法获取数据。请一分钟后再试。",
+    pingOn: (n: number) => [
+      `🔔 已设置。窗口 ${n} 结算后我会在这里通知你。`,
+      "",
+      "DarkpoolFi 由此只会知道这个 Telegram 账户在等待该窗口：不会知道你的市场、订单、方向、数量或钱包。",
+      "/stop 可取消所有提醒。",
+    ],
+    pingBad: "这不是订单当前可能在等待的窗口。请使用仪表盘中订单上的 Telegram 链接。",
+    pingFull: `你已在等待 ${MAX_PINGS} 个窗口。/stop 可清除它们。`,
+    pingPrivate: "提醒仅在与我的私聊中可用。",
+    stopped: (n: number) => (n ? `已取消结算提醒：${n} 个。` : "你没有待发送的结算提醒。"),
+    settled: (n: number) => `🔔 窗口 ${n} 已结算。打开仪表盘查看你的成交：${SITE}/dashboard`,
+    abandoned: (n: number) => `⚠️ 窗口 ${n} 在至少一个市场中未结算即关闭。如果你的订单在其中，请在仪表盘中取回锁定资金：${SITE}/dashboard`,
+    late: (n: number) => `⚠️ 窗口 ${n} 未能按时结算。如果你的订单在其中，可在仪表盘中取回锁定资金：${SITE}/dashboard`,
   },
 };
 const BANDS: Record<string, string> = { Thin: "低", Balanced: "均衡", Active: "活跃" };
@@ -212,7 +243,24 @@ const BANDS: Record<string, string> = { Thin: "低", Balanced: "均衡", Active:
  * The reply to one message, or null when the bot should stay quiet (plain chat in a group). `now` is unix seconds.
  * Commands may carry the bot's name (`/price@DarkpoolFiBot AAPL`) and any case.
  */
-export async function botReply(text: string, lang: Lang, load: Load, isPrivate: boolean, now = Date.now() / 1000): Promise<string | null> {
+/** Where settlement pings are kept (TG-5); the live one is the database, the check passes a fake. */
+export interface Pings {
+  add(chat: number, epoch: number, lang: Lang): Promise<"ok" | "full">;
+  stop(chat: number): Promise<number>;
+}
+export const dbPings: Pings = {
+  add: (chat, epoch, lang) => rpc<"ok" | "full">("dark_tg_ping_add", { p_chat: chat, p_epoch: epoch, p_lang: lang, p_max: MAX_PINGS }),
+  stop: (chat) => rpc<number>("dark_tg_ping_stop", { p_chat: chat }),
+};
+
+export async function botReply(
+  text: string,
+  lang: Lang,
+  load: Load,
+  isPrivate: boolean,
+  now = Date.now() / 1000,
+  chat?: { id: number; pings: Pings },
+): Promise<string | null> {
   const [head = "", arg = ""] = text.trim().split(/\s+/);
   if (!head.startsWith("/")) return isPrivate ? C[lang].start.join("\n") : null;
   const cmd = head.slice(1).split("@")[0]!.toLowerCase();
@@ -220,7 +268,18 @@ export async function botReply(text: string, lang: Lang, load: Load, isPrivate: 
   const band = (b: string) => (lang === "zh" ? (BANDS[b] ?? b) : b);
   try {
     switch (cmd) {
-      case "start":
+      case "start": {
+        // a deep link from an order in the dashboard: t.me/<bot>?start=w<window>
+        const m = /^w(\d{1,12})$/.exec(arg);
+        if (!m) return c.start.join("\n");
+        if (!isPrivate || !chat) return c.pingPrivate;
+        const epoch = Number(m[1]);
+        const current = Math.floor(now / WINDOW_SECONDS);
+        if (epoch < current - 12 || epoch > current + 1) return c.pingBad; // a GTC order rests up to 12 windows
+        return (await chat.pings.add(chat.id, epoch, lang)) === "full" ? c.pingFull : c.pingOn(epoch).join("\n");
+      }
+      case "stop":
+        return chat ? c.stopped(await chat.pings.stop(chat.id)) : null;
       case "help":
         return c.start.join("\n");
       case "window": {
@@ -278,6 +337,49 @@ export async function botReply(text: string, lang: Lang, load: Load, isPrivate: 
   }
 }
 
+interface PendingPing {
+  epoch: number;
+  chats: { chat: number; lang: Lang }[];
+  open: boolean; // some market's window of this number is neither settled nor abandoned
+  abandoned: boolean;
+}
+
+/**
+ * Pool cron step (TG-5): pings every chat waiting on a window once that window number has closed in every market, or
+ * once its settle deadline has passed, then forgets it. A chat that blocked the bot is skipped, never retried.
+ */
+export async function sendSettlementPings(
+  now = Date.now() / 1000,
+  io = {
+    pending: () => rpc<PendingPing[]>("dark_tg_pings_pending", {}),
+    done: (epoch: number) => rpc<number>("dark_tg_pings_done", { p_epoch: epoch }),
+    send: (chat: number, text: string) => telegram("sendMessage", { chat_id: chat, text, link_preview_options: { is_disabled: true } }),
+  },
+) {
+  if (!process.env["TELEGRAM_BOT_TOKEN"]?.trim()) return { skipped: "no bot token" };
+  const pending = await io.pending();
+  if (!pending.length) return { idle: true };
+  let sent = 0;
+  let failed = 0;
+  const pinged: number[] = [];
+  for (const p of pending) {
+    const end = (p.epoch + 1) * WINDOW_SECONDS;
+    const late = now >= end + SETTLE_DEADLINE;
+    if (now < end || (p.open && !late)) continue;
+    for (const { chat, lang } of p.chats) {
+      const c = C[lang] ?? C.en;
+      const text = p.open ? c.late(p.epoch) : p.abandoned ? c.abandoned(p.epoch) : c.settled(p.epoch);
+      await io.send(chat, text).then(
+        () => sent++,
+        () => failed++,
+      );
+    }
+    await io.done(p.epoch);
+    pinged.push(p.epoch);
+  }
+  return pinged.length ? { pinged, sent, ...(failed ? { failed } : {}) } : { idle: true, waiting: pending.length };
+}
+
 /** The command menu Telegram shows, per language (set by scripts/telegram-setup.ts). */
 export const COMMANDS: Record<Lang, { command: string; description: string }[]> = {
   en: [
@@ -289,6 +391,7 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "fees", description: "Venue and relayer fees" },
     { command: "dark", description: "The DARK token" },
     { command: "howto", description: "How to trade privately" },
+    { command: "stop", description: "Cancel settlement pings" },
     { command: "help", description: "What this bot does" },
   ],
   zh: [
@@ -300,6 +403,7 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "fees", description: "场所费与中继费" },
     { command: "dark", description: "DARK 代币" },
     { command: "howto", description: "如何私密交易" },
+    { command: "stop", description: "取消结算提醒" },
     { command: "help", description: "机器人功能" },
   ],
 };

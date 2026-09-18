@@ -161,9 +161,22 @@ function orderRow(o, now) {
     `<div class="sp-order"><div><strong>${esc(o.side)} ${esc(o.size)} ${esc(o.symbol)}</strong><div class="sp-steps">${steps}</div>` +
     `<small>Window ${esc(o.window)} · ${esc(stage.detail)} <span data-countdown="${esc(o.id)}">${stage.countdown === null ? '' : esc(clock(stage.countdown))}</span></small></div>` +
     (o.reclaimable ? `<button class="text-action" type="button" data-reclaim="${esc(o.id)}">Reclaim lock ↗</button>` : '') +
+    (o.status === 'open' && !o.reclaimable
+      ? `<a class="text-action" data-tg-ping="${esc(o.window)}" href="https://t.me/${TG_BOT}?start=w${esc(o.window)}" target="_blank" rel="noopener noreferrer">Ping me on Telegram ↗</a>`
+      : '') +
     '</div>'
   );
 }
+
+// Settlement pings on Telegram (TG-5): opt-in per order. The link hands the bot only the window number; nothing is
+// sent from this page. Asked once per click, because it tells DarkpoolFi which window this Telegram account waits on.
+const TG_BOT = 'DarkPoolFi_bot';
+document.addEventListener('click', (e) => {
+  const link = e.target.closest?.('[data-tg-ping]');
+  if (!link) return;
+  const ask = `@${TG_BOT} will message you when window ${link.dataset.tgPing} settles. DarkpoolFi then knows your Telegram account is waiting on that window, and nothing else: not your market, order, side, size or wallet. Continue?`;
+  if (!confirm(t(ask))) e.preventDefault();
+});
 
 /** Only the countdown text ticks each second; the rows themselves are rebuilt on sync. */
 function tickCountdowns() {

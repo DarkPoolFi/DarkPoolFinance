@@ -2,7 +2,7 @@
 // Telegram bot (TG-0 / TG-1): every command answers from the public endpoints' real shapes, in both languages; the
 // webhook refuses a request without Telegram's secret; the bot stays quiet in groups unless addressed with a command.
 import assert from "node:assert/strict";
-import { botReply, isTelegramAuthorized, type Load } from "./telegram";
+import { botReply, isTelegramAuthorized, sendSettlementPings, type Load } from "./telegram";
 
 // captured from https://darkpoolfi.tech/api/* on 2026-09-18, trimmed
 const DATA: Record<string, unknown> = {
@@ -91,6 +91,66 @@ assert.equal(await ask("hello", "en", false), null);
 assert.equal(await ask("/unknown", "en", false), null);
 assert.match((await ask("hello"))!, /DarkpoolFi/);
 assert.match((await ask("/unknown"))!, /\/help/);
+
+// TG-5: subscribing from an order's deep link, /stop, and the pings the pool cron sends
+const saved = new Map<string, string>();
+const pings = {
+  add: async (chat: number, epoch: number, lang: "en" | "zh") => {
+    if (![...saved.keys()].includes(`${chat}:${epoch}`) && [...saved.keys()].filter((k) => k.startsWith(`${chat}:`)).length >= 2) return "full" as const;
+    saved.set(`${chat}:${epoch}`, lang);
+    return "ok" as const;
+  },
+  stop: async (chat: number) => {
+    const mine = [...saved.keys()].filter((k) => k.startsWith(`${chat}:`));
+    mine.forEach((k) => saved.delete(k));
+    return mine.length;
+  },
+};
+const NOW = 1_789_745_000; // window 5965816
+const sub = (text: string, lang: "en" | "zh" = "en", isPrivate = true) => botReply(text, lang, load, isPrivate, NOW, { id: 7, pings });
+const on = (await sub("/start w5965816"))!;
+assert.match(on, /when window 5965816 settles/);
+assert.match(on, /nothing else: not your market, order, side, size or wallet/, "the privacy cost is stated");
+assert.deepEqual([...saved], [["7:5965816", "en"]], "only the chat and the window are kept");
+assert.match((await sub("/start w5965804", "zh"))!, /窗口 5965804 结算后/, "a GTC order's window up to 12 back");
+assert.match((await sub("/start w5965803"))!, /not a window an order can be waiting on/);
+assert.match((await sub("/start w5965818"))!, /not a window an order can be waiting on/);
+assert.match((await sub("/start w5965817"))!, /already waiting on 20 windows/, "the per-chat cap (2 in this fake)");
+assert.match((await sub("/start w5965816", "en", false))!, /private chat/);
+assert.match((await sub("/start"))!, /never asks for your seed phrase/, "a plain /start is still the welcome");
+assert.equal(await sub("/stop"), "Settlement pings cancelled: 2.");
+assert.equal(await sub("/stop"), "You had no settlement pings waiting.");
+
+const out: [number, string][] = [];
+const done: number[] = [];
+const io = (pending: { epoch: number; chats: { chat: number; lang: "en" | "zh" }[]; open: boolean; abandoned: boolean }[]) => ({
+  pending: async () => pending,
+  done: async (e: number) => (done.push(e), 1),
+  send: async (chat: number, text: string) => {
+    if (chat === 666) throw Error("Forbidden: bot was blocked by the user");
+    out.push([chat, text]);
+  },
+});
+process.env["TELEGRAM_BOT_TOKEN"] = "test";
+const W = 5_965_816;
+const end = (W + 1) * 300;
+let r = await sendSettlementPings(end - 1, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: false, abandoned: false }]));
+assert.deepEqual([r, out, done], [{ idle: true, waiting: 1 }, [], []], "nothing before the window ends");
+r = await sendSettlementPings(end + 30, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: true, abandoned: false }]));
+assert.deepEqual(out, [], "a market still settling holds the ping");
+r = await sendSettlementPings(end + 90, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }, { chat: 2, lang: "zh" }, { chat: 666, lang: "en" }], open: false, abandoned: false }]));
+assert.deepEqual(r, { pinged: [W], sent: 2, failed: 1 }, "a chat that blocked the bot does not stop the rest");
+assert.match(out[0]![1], /Window 5965816 has settled/);
+assert.match(out[1]![1], /窗口 5965816 已结算/);
+assert.deepEqual(done, [W], "pinged once, then forgotten");
+out.length = 0;
+await sendSettlementPings(end + 90, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: false, abandoned: true }]));
+assert.match(out[0]![1], /closed without settling in at least one market/);
+out.length = 0;
+await sendSettlementPings(end + 3_600, io([{ epoch: W, chats: [{ chat: 1, lang: "en" }], open: true, abandoned: false }]));
+assert.match(out[0]![1], /was not settled in time/, "past the deadline it says so, and the lock can be reclaimed");
+delete process.env["TELEGRAM_BOT_TOKEN"];
+assert.deepEqual(await sendSettlementPings(end + 90, io([])), { skipped: "no bot token" });
 
 // a failing endpoint gives a plain message, never a stack
 assert.match((await botReply("/fees", "en", async () => Promise.reject(Error("boom")), true))!, /not available right now/);

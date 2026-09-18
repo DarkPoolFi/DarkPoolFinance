@@ -11,11 +11,12 @@ import { STUCK_AFTER_SEC, tendSends } from "@/server/darkpool/pool/sends";
 import { sweepFees } from "@/server/darkpool/pool/sweep";
 import { advancePoolTree } from "@/server/darkpool/pool/tree";
 import { runPoolWindows } from "@/server/darkpool/pool/windows";
+import { sendSettlementPings } from "@/server/darkpool/telegram";
 
 const LOW_OPERATOR_WEI = 1_000_000_000_000_000n; // 0.001 ETH ≈ 3–4 tree batches or settlements
 
 // Every minute: re-broadcast or bump stuck operator sends, settle relay fees against gas paid, index the shielded pool's events, append queued commitments,
-// seal and settle finished windows, publish the association set, sweep settlement fees to the operator. Sends go
+// seal and settle finished windows, ping the Telegram chats waiting on them, publish the association set, sweep settlement fees to the operator. Sends go
 // through the queue in pool/sends.ts, so steps with different work can each have a transaction in flight.
 export const Route = createFileRoute("/api/cron/pool")({
   server: {
@@ -37,6 +38,7 @@ export const Route = createFileRoute("/api/cron/pool")({
             index: indexPool,
             tree: advancePoolTree,
             windows: runPoolWindows,
+            pings: () => sendSettlementPings(), // TG-5: opt-in Telegram pings for windows that just closed
             association: publishAssociation,
             sweep: sweepFees,
           });

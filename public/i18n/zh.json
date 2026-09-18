@@ -1526,5 +1526,15 @@
  "Shares": "份额",
  "Transaction": "交易",
  "Your deposits and withdrawals": "你的存入与提取",
- "unpriced": "无法定价"
+ "unpriced": "无法定价",
+ "DarkPoolFi_bot": "DarkPoolFi_bot",
+ "Ping me on Telegram ↗": "在 Telegram 上提醒我 ↗",
+ "@{0} will message you when window {1} settles. DarkpoolFi then knows your Telegram account is waiting on that window, and nothing else: not your market, order, side, size or wallet. Continue?": "窗口 {1} 结算后，@{0} 会给你发消息。DarkpoolFi 由此只会知道你的 Telegram 账户在等待该窗口：不会知道你的市场、订单、方向、数量或钱包。继续吗？",
+ "/stop": "/stop",
+ "Cancels every settlement ping this chat is waiting on.": "取消此聊天正在等待的所有结算提醒。",
+ "Optional. Each open order in the Shielded pool tab has a": "可选功能。隐私池标签页中的每个未结订单都有一个",
+ "Ping me on Telegram": "在 Telegram 上提醒我",
+ "Settlement pings": "结算提醒",
+ "Turning a ping on tells DarkpoolFi that your Telegram account is waiting on that window number. Nothing else is shared: not the market, order, side, size or wallet. Each ping is deleted once sent. The in-browser settlement alerts stay the fully private option.": "开启提醒会让 DarkpoolFi 知道你的 Telegram 账户在等待该窗口编号。除此之外不共享任何信息：不包括市场、订单、方向、数量或钱包。每条提醒发送后即被删除。浏览器内的结算提醒仍是完全私密的选择。",
+ "link. It opens the bot with that order&rsquo;s window number, and the bot messages you once the window has settled in every market, or tells you if it closed without settling so you can reclaim your lock. Nothing is sent from the dashboard.": "链接。它会带着该订单的窗口编号打开机器人；当该窗口在所有市场结算后，机器人会给你发消息；如果窗口未结算即关闭，它也会告诉你，以便你取回锁定资金。仪表盘不会发送任何内容。"
 }
