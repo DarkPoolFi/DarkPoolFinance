@@ -22,7 +22,7 @@
 .record-tag{font-size:8px;padding:3px 6px;background:#ede1f7;color:#84639c;margin-left:7px;letter-spacing:.04em}
 .holdings-pnl{display:flex;flex-wrap:wrap;gap:8px 28px;margin:0 0 14px;font-size:12px;color:#6f5a7d}.holdings-pnl strong{margin-left:6px;color:#21172d}.holdings-pnl strong[data-sign="1"],.holdings-row [data-sign="1"]{color:#1f8a5b}.holdings-pnl strong[data-sign="-1"],.holdings-row [data-sign="-1"]{color:#c2410c}
 .sp-rfq-code{margin:4px 0 8px}.sp-rfq-code code{display:block;overflow-wrap:anywhere;font-size:11px;padding:10px 12px;border-radius:10px;background:#f1ebf6;color:#21172d}#sp-rfq-deals{margin-top:18px}
-.sp-lp-earnings{display:block;margin-top:6px;line-height:1.7}.sp-lp-earnings [data-sign="1"]{color:#1f8a5b}.sp-lp-earnings [data-sign="-1"]{color:#c2410c}
+.sp-lp-earnings{display:block;margin-top:6px;line-height:1.7}.sp-lp-history{margin-top:10px;font-size:12px}.sp-lp-history caption{text-align:left;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#776580;padding-bottom:4px}.sp-lp-earnings [data-sign="1"]{color:#1f8a5b}.sp-lp-earnings [data-sign="-1"]{color:#c2410c}
 .activity-export{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-size:11px;color:#a388b0}.activity-export input{padding:7px 8px;border:1px solid #e8ddef;background:#faf7fc;color:#78528c;font:inherit;border-radius:0;min-width:0}.activity-export .text-action{margin-left:6px}
 /* TU-09: the command palette's search field has no ring of its own (terminal.css), so its row shows focus */
 .command-head:focus-within{box-shadow:inset 0 -2px #121218}

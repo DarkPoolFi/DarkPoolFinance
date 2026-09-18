@@ -1521,5 +1521,10 @@
  "What it answers": "回答内容",
  "What the bot does, and the commands it answers.": "机器人的功能及其支持的命令。",
  "What the shielded pool holds against what it owes, from the signed solvency report.": "隐私池持有与应付的对比，数据来自已签名的偿付能力报告。",
- "answers questions about the venue from Telegram. It reads the same public data as the website, so its answers match the dashboard, and it replies in English or Chinese to match your Telegram language.": "在 Telegram 中回答有关交易场所的问题。它读取与网站相同的公开数据，因此答案与仪表盘一致，并会根据你的 Telegram 语言以英文或中文回复。"
+ "answers questions about the venue from Telegram. It reads the same public data as the website, so its answers match the dashboard, and it replies in English or Chinese to match your Telegram language.": "在 Telegram 中回答有关交易场所的问题。它读取与网站相同的公开数据，因此答案与仪表盘一致，并会根据你的 Telegram 语言以英文或中文回复。",
+ "Date": "日期",
+ "Shares": "份额",
+ "Transaction": "交易",
+ "Your deposits and withdrawals": "你的存入与提取",
+ "unpriced": "无法定价"
 }

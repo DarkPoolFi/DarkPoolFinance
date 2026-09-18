@@ -32,6 +32,8 @@ interface PoolEvent {
 
 export interface LpEvent {
   block: number;
+  time: number; // block timestamp, unix seconds
+  tx: string; // the vault transaction, for the LP's own history (TU-29)
   kind: "deposit" | "withdraw";
   lp: string;
   eth: string; // wei
@@ -153,6 +155,8 @@ async function build() {
       const [tokenUsd, ethUsd] = BigInt(e.args["tokens"]) > 0n ? await Promise.all([answerAt(book.feed, time), answerAt(ethFeed, time)]) : [null, null];
       events.push({
         block: log.blockNumber,
+        time,
+        tx: log.transactionHash,
         kind: e.name === "Deposited" ? "deposit" : "withdraw",
         lp: String(e.args["lp"]).toLowerCase(),
         eth: String(e.args["eth"]),

@@ -489,6 +489,14 @@ let history = null; // /api/backstop/history: every book's deposits, withdrawals
  * income from each settled window is credited in proportion to the LP's shares at that moment. PnL = value now +
  * everything withdrawn − everything deposited, so it includes spread income, price moves and rebalancing.
  */
+/** A vault deposit or withdrawal in ETH as the vault valued it (ETH + tokens × tokenUsd ÷ ethUsd); null if unpriced. */
+function lpWorth(e) {
+  const tokens = BigInt(e.tokens);
+  if (tokens === 0n) return BigInt(e.eth);
+  if (!e.tokenUsd || !e.ethUsd || BigInt(e.ethUsd) === 0n) return null;
+  return BigInt(e.eth) + (tokens * BigInt(e.tokenUsd)) / BigInt(e.ethUsd);
+}
+
 function lpEarnings(book, lp, sharesNow, totalSharesNow, valueWeiNow) {
   const me = String(lp).toLowerCase();
   const timeline = [...book.events.map((e) => ({ ...e, fee: false })), ...book.fees.map((f) => ({ ...f, fee: true }))].sort((a, b) => a.block - b.block || Number(a.fee) - Number(b.fee));
@@ -499,13 +507,9 @@ function lpEarnings(book, lp, sharesNow, totalSharesNow, valueWeiNow) {
   let fees = 0n;
   let unpriced = false;
   const worth = (e) => {
-    const tokens = BigInt(e.tokens);
-    if (tokens === 0n) return BigInt(e.eth);
-    if (!e.tokenUsd || !e.ethUsd || BigInt(e.ethUsd) === 0n) {
-      unpriced = true;
-      return BigInt(e.eth);
-    }
-    return BigInt(e.eth) + (tokens * BigInt(e.tokenUsd)) / BigInt(e.ethUsd);
+    const w = lpWorth(e);
+    if (w === null) unpriced = true;
+    return w ?? BigInt(e.eth); // an unpriced token deposit counts at its ETH part
   };
   for (const x of timeline) {
     if (x.fee) {
@@ -521,6 +525,14 @@ function lpEarnings(book, lp, sharesNow, totalSharesNow, valueWeiNow) {
   }
   const value = valueWeiNow === null || totalSharesNow === 0n ? null : (valueWeiNow * sharesNow) / totalSharesNow;
   return { deposited, withdrawn, value, pnl: value === null ? null : value + withdrawn - deposited, fees, unpriced, involved: deposited > 0n || withdrawn > 0n };
+}
+/** One LP's deposits and withdrawals in one book, newest first, each with its value at the time (TU-29). Pure. */
+function lpHistory(book, lp) {
+  const me = String(lp).toLowerCase();
+  return book.events
+    .filter((e) => e.lp === me)
+    .map((e) => ({ time: e.time ?? null, kind: e.kind, eth: BigInt(e.eth), tokens: BigInt(e.tokens), shares: BigInt(e.shares), value: lpWorth(e), tx: e.tx ?? null }))
+    .reverse();
 }
 const signedEth = (wei) => `${wei > 0n ? '+' : wei < 0n ? '−' : ''}${shown(wei < 0n ? -wei : wei)}`;
 const word = (hex) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
@@ -584,6 +596,8 @@ function updateMyShareNote() {
   const symbol = $('#sp-backstop-market').value;
   const mine = myShares[symbol] ?? 0n;
   const earned = myEarnings(symbol, mine);
+  const past = $('#sp-backstop-history');
+  if (past) past.innerHTML = historyTable(symbol);
   if (mine <= 0n && !earned?.involved) {
     el.textContent = 'You hold no shares in this market yet.';
     return;
@@ -607,6 +621,25 @@ function myEarnings(symbol, mine) {
   const h = history?.books?.find((b) => b.symbol === symbol);
   if (!myLp || !book || !h) return null;
   return lpEarnings(h, myLp, mine, BigInt(book.shares || 0), book.valueWei === null ? null : BigInt(book.valueWei));
+}
+
+/** The connected wallet's deposits and withdrawals in this book, with a link to each transaction. */
+function historyTable(symbol) {
+  const h = history?.books?.find((b) => b.symbol === symbol);
+  const rows = h && myLp ? lpHistory(h, myLp) : [];
+  if (!rows.length) return '';
+  const tokens = (v) => (Number(v) / 10 ** (h.decimals ?? 18)).toFixed(6);
+  const when = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '—');
+  return (
+    '<div class="sp-scroll"><table class="sp-table sp-lp-history"><caption>Your deposits and withdrawals</caption><thead><tr><th>Date</th><th>Action</th><th>ETH</th><th>Tokens</th><th>Shares</th><th>Value · ETH</th><th>Transaction</th></tr></thead><tbody>' +
+    rows
+      .map(
+        (r) =>
+          `<tr><td>${esc(when(r.time))}</td><td>${r.kind === 'deposit' ? 'Deposit' : 'Withdrawal'}</td><td>${esc(shown(r.eth))}</td><td>${esc(tokens(r.tokens))}</td><td>${esc(shown(r.shares))}</td><td>${r.value === null ? 'unpriced' : esc(shown(r.value))}</td><td>${r.tx ? `<a href="https://robinhoodchain.blockscout.com/tx/${esc(r.tx)}" target="_blank" rel="noopener noreferrer">${esc(r.tx.slice(0, 10))}…</a>` : '—'}</td></tr>`,
+      )
+      .join('') +
+    '</tbody></table></div>'
+  );
 }
 
 function earningsLine(e) {
