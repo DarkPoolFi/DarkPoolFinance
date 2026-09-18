@@ -20,6 +20,12 @@ Orders are sealed, proven in your browser, and crossed in fixed windows where ev
 
 <br/>
 
+**$DARK contract address**
+
+[`0x073407b2ba247e88a3183849ec2817512171d7ef`](https://robinhoodchain.blockscout.com/address/0x073407b2ba247e88a3183849ec2817512171d7ef)
+
+<br/>
+
 <img src="https://raw.githubusercontent.com/DarkPoolFi/DarkPoolFinance/main/public/assets/darkpool-hero-social.png?v=2" alt="DarkpoolFi: your order shouldn't be public before it fills" width="880" />
 
 </div>
