@@ -1,5 +1,6 @@
 // bun supabase/checks/pool.check.ts
-// Shielded pool mirror SQL (0008, open windows as rewritten in 0017, the event cursor in 0019) in PGlite: idempotent event
+// Shielded pool mirror SQL (0008, open windows as rewritten in 0017, the event cursor in 0019, the leaf table in 0020) in
+// PGlite: idempotent event
 // recording with the cursor, leaf order and gap stats,
 // open windows in slot order with sealed / settled / abandoned status, operator openings, lockdown.
 import { PGlite } from "@electric-sql/pglite";
@@ -34,6 +35,10 @@ assert.equal(await record(batch, 12), 5);
 assert.equal(await record(batch, 12), 0, "re-scanned range inserts nothing");
 await record([], 11);
 assert.equal(await cursor(), 12, "cursor never moves backwards");
+
+// TU-12: 0020 lands on a mirror that already holds leaves, and backfills them
+for (let i = 0; i < 2; i++) await db.exec(readFileSync(new URL(`../migrations/0020_darkpool_leaf_table.sql`, import.meta.url), "utf8"));
+assert.equal(await val(`select count(*)::int from dark_pool_leaf`), 2, "existing leaves backfilled once");
 
 assert.deepEqual(await val(`select dark_pool_leaves()`), ["0xc0", "0xc1"]);
 assert.deepEqual(await val(`select dark_pool_leaves(1)`), ["0xc1"]);
@@ -76,8 +81,25 @@ await q(`select dark_pool_put_openings($1::jsonb)`, [JSON.stringify([{ commitmen
 await q(`select dark_pool_put_openings($1::jsonb)`, [JSON.stringify([{ commitment: "0xabc", sealed: "second" }])]);
 assert.deepEqual(await val(`select dark_pool_openings(array['0xAbC', '0xdef'])`), { "0xabc": "first" }, "first opening kept, lookups case-insensitive");
 
+// TU-12: new leaves come from the trigger, a replay changes nothing, reads are a primary-key range scan, and clearing
+// the mirror (a pool switch) clears the leaves with it
+await record([ev("0xT7", 0, 16, "Committed", { index: "2", commitment: "0xc2" })], 16);
+assert.deepEqual(await val(`select dark_pool_leaves()`), ["0xc0", "0xc1", "0xc2", "0xc3"]);
+assert.deepEqual(await val(`select dark_pool_leaf_stats()`), { count: 4, max: 3 }, "the gap is filled");
+await record([ev("0xT7", 0, 16, "Committed", { index: "2", commitment: "0xc2" }), ev("0xT4", 0, 13, "Committed", { index: "3", commitment: "0xc3" })], 16);
+assert.deepEqual(await val(`select dark_pool_leaf_stats()`), { count: 4, max: 3 }, "a re-scanned range adds no leaves");
+await q(`set enable_seqscan = off`);
+const plan = (await q(`explain select idx, commitment from dark_pool_leaf where idx >= 2 order by idx limit 5`)).map((r) => Object.values(r)[0]).join(" | ");
+assert.match(plan, /dark_pool_leaf_pkey/, `leaf reads use the primary key: ${plan}`);
+await q(`reset enable_seqscan`);
+await q(`delete from dark_pool_events where name = 'Committed' and tx_hash = '0xt7'`);
+assert.deepEqual(await val(`select dark_pool_leaves(2)`), ["0xc3"], "deleting an event deletes its leaf");
+
 for (const fn of ["dark_pool_record(jsonb,bigint)", "dark_pool_events(text[],bigint,integer,integer)", "dark_pool_leaves(bigint,integer)", "dark_pool_leaf_stats()", "dark_pool_open_windows()", "dark_pool_put_openings(jsonb)", "dark_pool_openings(text[])"]) {
   assert.equal(await val(`select has_function_privilege('anon', $1, 'execute')`, [fn]), false, `${fn} exposed to anon`);
   assert.equal(await val(`select has_function_privilege('service_role', $1, 'execute')`, [fn]), true, `${fn} not granted to service_role`);
 }
+assert.equal(await val(`select has_function_privilege('anon', 'dark_pool_leaf_from_event()', 'execute')`), false);
+await q(`delete from dark_pool_events`);
+assert.deepEqual(await val(`select dark_pool_leaf_stats()`), { count: 0, max: -1 }, "clearing the mirror clears the leaves");
 console.log("pool.check: ok");

@@ -85,16 +85,33 @@ export function emptyRoots() {
   return empty;
 }
 
+// Levels of the last few trees built, keyed by their first leaf (the pool tree and the association tree differ there).
+// A tree that shares a prefix with a cached one rehashes only from where they part, so a sync that adds k leaves
+// costs about 2k hashes, and repeated root and path reads of the same leaves cost none (TU-14).
+const built = new Map<bigint, bigint[][]>();
+
 /** Every level of the tree holding `leaves`, empty positions filled with empty subtrees. */
 function levels(leaves: bigint[]) {
   const z = emptyRoots();
-  const out = [leaves];
-  for (let i = 0; i < DEPTH; i++) {
+  const key = leaves[0] ?? 0n;
+  const prev = built.get(key);
+  let from = 0; // first leaf that differs from the cached tree
+  if (prev) {
+    const old = prev[0]!;
+    const n = Math.min(old.length, leaves.length);
+    while (from < n && old[from] === leaves[from]) from++;
+  }
+  const out = [leaves.slice()]; // our own copy: callers may reuse their array
+  for (let i = 0; i < DEPTH; i++, from >>= 1) {
     const level = out[i]!;
-    const next: bigint[] = [];
-    for (let k = 0; k < level.length; k += 2) next.push(node(level[k]!, level[k + 1] ?? z[i]!));
+    const start = from >> 1;
+    const next = prev ? prev[i + 1]!.slice(0, start) : [];
+    for (let k = start * 2; k < level.length; k += 2) next.push(node(level[k]!, level[k + 1] ?? z[i]!));
     out.push(next);
   }
+  built.delete(key); // re-insert as the most recent
+  built.set(key, out);
+  if (built.size > 4) built.delete(built.keys().next().value!);
   return out;
 }
 
