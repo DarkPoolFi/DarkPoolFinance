@@ -782,13 +782,20 @@ const dcaEvery = (seconds) => ({ 300: 'window (5 minutes)', 900: '15 minutes', 3
 const dcaDue = (plan, now) => plan.status === 'on' && plan.left > 0 && now >= plan.next;
 
 /**
+ * The plan's next round after `now`: on the plan's own clock (its first round plus whole intervals), and at least half
+ * an interval away, so a late round is never followed straight away by the next one. Keeping the clock is what lets a
+ * Telegram reminder (TG-4), which runs on the same rule, stay in step with the plan. Pure.
+ */
+const dcaSlot = (plan, now) => plan.next + plan.every * Math.max(0, Math.ceil((now + plan.every / 2 - plan.next) / plan.every));
+
+/**
  * A plan after one bought round. Rounds you were away for are counted and skipped, never stacked into a burst of
  * orders on your return: the plan buys what you asked for, it just finishes later. Pure.
  */
 function dcaAdvance(plan, now) {
-  const missed = Math.max(0, Math.floor((now - plan.next) / plan.every));
+  const next = dcaSlot(plan, now);
   const left = plan.left - 1;
-  return { ...plan, left, missed: (plan.missed ?? 0) + missed, next: now + plan.every, status: left > 0 ? 'on' : 'done' };
+  return { ...plan, left, missed: (plan.missed ?? 0) + Math.round((next - plan.next) / plan.every) - 1, next, status: left > 0 ? 'on' : 'done' };
 }
 
 const DCA_LOCK = 'darkpool_dca_lock';
@@ -809,7 +816,7 @@ function dcaClaim(now, lease = 180) {
   }
 }
 
-let dca = null; // { plans: [{ id, symbol, spendEth, every, total, left, next, limitText, status, missed, error }] }
+let dca = null; // { plans: [{ id, symbol, spendEth, every, total, left, next, limitText, status, missed, error, tg }] }
 const dcaKey = () => `darkpool_dca_v1:${account.wallet.toLowerCase()}`;
 
 function dcaSave() {
@@ -902,10 +909,21 @@ function renderDca() {
       const missed = p.missed ? ` · ${p.missed} round${p.missed === 1 ? '' : 's'} missed while away` : '';
       const buttons =
         (p.status === 'done' ? '' : `<button class="text-action" type="button" data-dca="${p.status === 'on' ? 'pause' : 'resume'}" data-id="${p.id}">${p.status === 'on' ? 'Pause' : 'Resume'}</button> `) +
-        `<button class="text-action" type="button" data-dca="stop" data-id="${p.id}">Remove</button>`;
+        `<button class="text-action" type="button" data-dca="stop" data-id="${p.id}">Remove</button>` +
+        dcaTelegram(p);
       return `<div class="sp-order"><div><strong>${esc(p.spendEth)} ETH of ${esc(p.symbol)} · every ${dcaEvery(p.every)}</strong><small>${state} · ${p.left} of ${p.total} left${when}${missed}${p.error ? ` · ${esc(p.error)}` : ''}</small></div><div>${buttons}</div></div>`;
     })
     .join('');
+}
+
+// Telegram reminders for a plan (TG-4): opt-in, hourly or slower plans only. The link hands the bot the schedule alone
+// (a random tag, the next round, the interval, the rounds left); the market, the amount and the orders stay here, and
+// nothing is sent from this page. The tag is what the plan's stop link names.
+function dcaTelegram(p) {
+  if (p.tg) return ` <a class="text-action" data-dca-tg-stop="${p.id}" href="https://t.me/${TG_BOT}?start=x${p.tg}" target="_blank" rel="noopener noreferrer">Stop Telegram reminders ↗</a>`;
+  if (p.status !== 'on' || p.every < 3600 || p.left < 1) return '';
+  const tag = [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return ` <a class="text-action" data-dca-tg="${p.id}" data-tag="${tag}" href="https://t.me/${TG_BOT}?start=r${tag}_${Math.floor(p.next)}_${p.every}_${p.left}" target="_blank" rel="noopener noreferrer">Remind me on Telegram ↗</a>`;
 }
 
 $('#sp-dca-form').addEventListener('submit', (e) => {
@@ -935,15 +953,29 @@ $('#sp-dca-form').addEventListener('submit', (e) => {
 });
 
 $('#sp-dca-plans').addEventListener('click', (e) => {
+  const link = e.target.closest('[data-dca-tg], [data-dca-tg-stop]');
+  if (link && dca) {
+    const plan = dca.plans.find((p) => p.id === (link.dataset.dcaTg ?? link.dataset.dcaTgStop));
+    if (!plan) return;
+    if (link.dataset.dcaTg) {
+      const ask = `@${TG_BOT} will remind you when this plan's next round is due, every ${dcaEvery(plan.every)}. DarkpoolFi then knows your Telegram account has a buy plan and when it runs, and nothing else: not the market, the amount, your orders or your wallet. Continue?`;
+      if (!confirm(t(ask))) return e.preventDefault();
+      plan.tg = link.dataset.tag;
+    } else delete plan.tg;
+    dcaSave();
+    return setTimeout(renderDca); // after the browser has followed the link
+  }
   const button = e.target.closest('[data-dca]');
   if (!button || !dca) return;
   const plan = dca.plans.find((p) => p.id === button.dataset.id);
   if (!plan) return;
-  if (button.dataset.dca === 'stop') dca.plans = dca.plans.filter((p) => p !== plan);
-  else if (button.dataset.dca === 'pause') plan.status = 'paused';
+  if (button.dataset.dca === 'stop') {
+    dca.plans = dca.plans.filter((p) => p !== plan);
+    if (plan.tg) say(`This plan's Telegram reminders continue until their last round. Send /stop to @${TG_BOT} to end them now.`, 'info');
+  } else if (button.dataset.dca === 'pause') plan.status = 'paused';
   else {
     plan.status = 'on';
-    plan.next = Date.now() / 1000 + plan.every; // resuming waits a full round, it does not fire on the spot
+    plan.next = dcaSlot(plan, Date.now() / 1000); // resuming waits for the plan's next round, it does not fire on the spot
     delete plan.error;
   }
   dcaSave();

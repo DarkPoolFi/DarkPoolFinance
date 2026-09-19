@@ -1,9 +1,10 @@
 // bun src/shielded/dca.check.ts
-// Recurring private buys (public/shielded.js dcaSize / dcaDue / dcaAdvance). A plan is a schedule this browser keeps,
+// Recurring private buys (public/shielded.js dcaSize / dcaDue / dcaSlot / dcaAdvance, and the TG-4 reminder link). A plan is a schedule this browser keeps,
 // so the parts worth pinning are the ones that decide when real money is spent: what a round's spend buys at the
 // current reference, when a round is due, and what happens to the rounds you were away for.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { parseSchedule } from "../server/darkpool/telegram";
 
 const src = readFileSync(new URL("../../public/shielded.js", import.meta.url), "utf8");
 const grab = (name: string, re: RegExp) => {
@@ -12,22 +13,27 @@ const grab = (name: string, re: RegExp) => {
   return m[0];
 };
 type Plan = { status: string; left: number; next: number; every: number; missed?: number };
-const { dcaSize, dcaDue, dcaAdvance, dcaWait, dcaEvery, dcaClaim } = new Function(
+const { dcaSize, dcaDue, dcaSlot, dcaAdvance, dcaWait, dcaEvery, dcaClaim, dcaTelegram } = new Function(
   [
     grab("dcaSize", /function dcaSize\([\s\S]*?\n\}/),
     grab("dcaWait", /function dcaWait\([\s\S]*?\n\}/),
     grab("dcaEvery", /const dcaEvery = .*/),
     grab("dcaDue", /const dcaDue = .*/),
+    grab("dcaSlot", /const dcaSlot = .*/),
     grab("dcaAdvance", /function dcaAdvance\([\s\S]*?\n\}/),
+    grab("TG_BOT", /const TG_BOT = .*/),
+    grab("dcaTelegram", /function dcaTelegram\([\s\S]*?\n\}/),
     grab("DCA_LOCK", /const DCA_LOCK = .*/),
     grab("dcaTab", /const dcaTab = .*/),
     grab("dcaClaim", /function dcaClaim\([\s\S]*?\n\}/),
-    "return { dcaSize, dcaDue, dcaAdvance, dcaWait, dcaEvery, dcaClaim };",
+    "return { dcaSize, dcaDue, dcaSlot, dcaAdvance, dcaWait, dcaEvery, dcaClaim, dcaTelegram };",
   ].join("\n"),
 )() as {
   dcaSize: (spendEth: string, refUsd: unknown, ethUsd: unknown) => string | null;
   dcaDue: (plan: Plan, now: number) => boolean;
+  dcaSlot: (plan: Plan, now: number) => number;
   dcaAdvance: (plan: Plan, now: number) => Plan & { missed: number };
+  dcaTelegram: (plan: Plan & { id: string; tg?: string }) => string;
   dcaWait: (seconds: number) => string;
   dcaEvery: (seconds: number) => string;
   dcaClaim: (now: number, lease?: number) => boolean;
@@ -59,12 +65,28 @@ assert.deepEqual([onTime.left, onTime.next, onTime.missed, onTime.status], [2, 4
 const away = dcaAdvance(plan, 1000 + 3 * 3600 + 5); // back after three rounds' worth of absence
 assert.equal(away.missed, 3, "the missed rounds are counted");
 assert.equal(away.left, 2, "but they do not consume the plan: it buys what was asked for, later");
-assert.equal(away.next, 1000 + 3 * 3600 + 5 + 3600, "and the next round is a full interval from now, not from the past");
-assert.equal(dcaDue(away, away.next - 1), false, "so returning after a long absence places one order, not a burst");
+assert.equal(away.next, 1000 + 4 * 3600, "the next round stays on the plan's clock, the first one still ahead");
+assert.equal(dcaDue(away, 1000 + 3 * 3600 + 6), false, "so returning after a long absence places one order, not a burst");
+const late = dcaAdvance(plan, 1000 + 0.6 * 3600); // one round, bought 36 minutes late
+assert.deepEqual([late.next, late.missed], [1000 + 2 * 3600, 1], "a round only 24 minutes off is skipped: rounds stay half an interval apart");
+assert.equal(dcaAdvance(plan, 1000 + 0.4 * 3600).next, 1000 + 3600, "24 minutes late, the next round keeps its time");
+assert.equal(dcaSlot(plan, 1000 - 7200), 1000, "resuming well before the next round keeps it");
+assert.equal(dcaSlot(plan, 1000 - 1000), 1000 + 3600, "resuming just before it waits for the one after");
 
 const last = dcaAdvance({ ...plan, left: 1 }, 1000);
 assert.deepEqual([last.left, last.status], [0, "done"], "the final round finishes the plan");
 assert.equal(dcaDue(last, 1e12), false);
+
+// --- the Telegram reminder link (TG-4) hands the bot this plan's clock, and nothing about the market or the amount ---
+const daily = { ...plan, id: "p1", every: 86_400, next: 1_789_745_600, left: 30 };
+const link = dcaTelegram(daily);
+const arg = /start=([^"]+)"/.exec(link)![1]!;
+assert.match(arg, /^r[0-9a-f]{8}_1789745600_86400_30$/, "only a random tag and the schedule");
+assert.doesNotMatch(link, /AAPL|ETH/);
+assert.equal(parseSchedule(arg, 1_789_745_000)!.next, daily.next, "the bot reminds when the plan buys");
+assert.equal(dcaTelegram({ ...daily, every: 900 }), "", "no reminders for plans faster than hourly");
+assert.equal(dcaTelegram({ ...daily, status: "paused" }), "");
+assert.match(dcaTelegram({ ...daily, tg: "0a1b2c3d" }), /start=x0a1b2c3d".*Stop Telegram reminders/, "a linked plan offers its stop link");
 
 // --- how the wait reads: a daily plan must not count down in minutes ---
 assert.deepEqual([dcaWait(45), dcaWait(90), dcaWait(3600 * 5 + 720)], ["45s", "1m 30s", "5h 12m"]);

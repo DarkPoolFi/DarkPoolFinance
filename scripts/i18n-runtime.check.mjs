@@ -22,7 +22,7 @@ const { translate } = new Function(
 const { orderStage } = new Function(`${grab("public/shielded.js", "orderStage", /function orderStage\([\s\S]*?\n\}/)}; return { orderStage };`)();
 
 // Names that stay as they are in Chinese copy.
-const KEEP = /\b(ETH|USD|AAPL|TSLA|MetaMask|DarkpoolFi|Robinhood|Chain|Chainlink|RFQ|TWAP|ETF|wei|qty|kind|transact|limitUsd|symbol|side|buy|sell|policy|gtc|ioc|order)\b|0x[0-9a-fA-F…]+/g;
+const KEEP = /\b(ETH|USD|AAPL|TSLA|MetaMask|DarkpoolFi|Robinhood|Chain|Chainlink|RFQ|TWAP|ETF|wei|qty|kind|transact|limitUsd|symbol|side|buy|sell|policy|gtc|ioc|order|Telegram)\b|@\w+_bot|\/\w+|0x[0-9a-fA-F…]+/g;
 const english = (s) => s.replace(KEEP, "").match(/[A-Za-z]{3,}/g);
 const zh = (s) => {
   const out = translate(s);
@@ -82,6 +82,13 @@ zh("withdrawal 42 still has a tranche in flight");
 zh("0.25 ETH of it arrives with the next tree batch.");
 zh("3 order results");
 zh("AAPL selected. Your order ticket is ready.");
+
+// recurring buys and their Telegram reminders (TG-4); "hour" and "day" are keyed by hand, like buy and sell
+zh("0.05 ETH of AAPL · every hour");
+zh("0.05 ETH of AAPL · every day");
+zh("@DarkPoolFi_bot will remind you when this plan's next round is due, every hour. DarkpoolFi then knows your Telegram account has a buy plan and when it runs, and nothing else: not the market, the amount, your orders or your wallet. Continue?");
+zh("Remind me on Telegram ↗");
+zh("This plan's Telegram reminders continue until their last round. Send /stop to @DarkPoolFi_bot to end them now.");
 
 // pieces joined with + rather than a template are keyed by hand
 assert.equal(translate("Window 5965261 · 300 second window"), "窗口 5965261 · 300 秒窗口");

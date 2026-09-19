@@ -11,7 +11,7 @@ import { STUCK_AFTER_SEC, tendSends } from "@/server/darkpool/pool/sends";
 import { sweepFees } from "@/server/darkpool/pool/sweep";
 import { advancePoolTree } from "@/server/darkpool/pool/tree";
 import { runPoolWindows } from "@/server/darkpool/pool/windows";
-import { sendPriceAlerts, sendSettlementPings } from "@/server/darkpool/telegram";
+import { sendBuyReminders, sendPriceAlerts, sendSettlementPings } from "@/server/darkpool/telegram";
 import { runMarketFeed } from "@/server/darkpool/telegram-feed";
 
 const LOW_OPERATOR_WEI = 1_000_000_000_000_000n; // 0.001 ETH ≈ 3–4 tree batches or settlements
@@ -42,6 +42,7 @@ export const Route = createFileRoute("/api/cron/pool")({
             pings: () => sendSettlementPings(), // TG-5: opt-in Telegram pings for windows that just closed
             priceAlerts: () => sendPriceAlerts(), // TG-3: Telegram price alerts against the fresh references
             marketFeed: () => runMarketFeed(), // TG-2: market prices to /subscribe chats at the US open and close
+            buyReminders: () => sendBuyReminders(), // TG-4: opt-in Telegram reminders for buy plans with a round due
             association: publishAssociation,
             sweep: sweepFees,
           });

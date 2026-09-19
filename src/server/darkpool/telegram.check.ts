@@ -1,8 +1,8 @@
 // bun src/server/darkpool/telegram.check.ts
-// Telegram bot (TG-0 / TG-1 / TG-3 / TG-5): every command answers from the public endpoints' real shapes, in both languages; the
+// Telegram bot (TG-0 / TG-1 / TG-3 / TG-4 / TG-5): every command answers from the public endpoints' real shapes, in both languages; the
 // webhook refuses a request without Telegram's secret; the bot stays quiet in groups unless addressed with a command.
 import assert from "node:assert/strict";
-import { botReply, isTelegramAuthorized, parseUsd, sendPriceAlerts, sendSettlementPings, type Load } from "./telegram";
+import { botReply, isTelegramAuthorized, parseSchedule, parseUsd, sendBuyReminders, sendPriceAlerts, sendSettlementPings, type Load, type Schedule } from "./telegram";
 
 // captured from https://darkpoolfi.tech/api/* on 2026-09-18, trimmed
 const DATA: Record<string, unknown> = {
@@ -119,7 +119,7 @@ assert.match((await sub("/start w5965817"))!, /already waiting on 20 windows/, "
 assert.match((await sub("/start w5965816", "en", false))!, /private chat/);
 assert.match((await sub("/start"))!, /never asks for your seed phrase/, "a plain /start is still the welcome");
 assert.equal(await sub("/stop"), "Settlement pings cancelled: 2.");
-assert.equal(await sub("/stop"), "You had no settlement pings waiting.");
+assert.equal(await sub("/stop"), "You had no settlement pings or buy reminders waiting.");
 
 const out: [number, string][] = [];
 const done: number[] = [];
@@ -233,6 +233,66 @@ assert.equal(feedChats.get(-100), "zh", "subscribing again updates the language"
 assert.equal(await fd("/unsubscribe"), "Unsubscribed. No more market updates here.");
 assert.equal(await fd("/unsubscribe"), "You were not subscribed. /subscribe starts market updates.");
 assert.match((await ask("/help"))!, /\/subscribe · market prices at the US open and close/);
+
+// TG-4: buy-plan reminders from a plan's deep link, stopped by its stop link or /stop, sent by the pool cron
+const T = "0a1b2c3d";
+assert.deepEqual(parseSchedule(`r${T}_${NOW + 600}_86400_30`, NOW), { tag: T, next: NOW + 600, every: 86_400, left: 30 });
+assert.equal(parseSchedule(`r${T}_${NOW - 60}_3600_3`, NOW)!.next, NOW - 60 + 3_600, "a round due now is being bought by the open tab: start at the next");
+assert.equal(parseSchedule(`r${T}_${NOW - 3_000}_3600_3`, NOW)!.next, NOW - 3_000 + 2 * 3_600, "the next round at least half an interval away, as dcaSlot");
+for (const bad of [`r${T}_${NOW}_300_3`, `r${T}_${NOW}_3600_0`, `r${T}_${NOW}_3600_366`, `r${T}_${NOW + 7_300}_3600_3`, `rXYZ_${NOW}_3600_3`, `r${T}_${NOW}_3600`, "r"]) {
+  assert.equal(parseSchedule(bad, NOW), null, bad);
+}
+const plans = new Map<string, Schedule & { lang: string }>();
+const reminders = {
+  add: async (chat: number, s: Schedule, lang: "en" | "zh") => {
+    if (!plans.has(`${chat}:${s.tag}`) && [...plans.keys()].filter((k) => k.startsWith(`${chat}:`)).length >= 2) return "full" as const;
+    plans.set(`${chat}:${s.tag}`, { ...s, lang });
+    return "ok" as const;
+  },
+  remove: async (chat: number, tag: string | null) => {
+    const mine = [...plans.keys()].filter((k) => k === `${chat}:${tag}` || (tag === null && k.startsWith(`${chat}:`)));
+    mine.forEach((k) => plans.delete(k));
+    return mine.length;
+  },
+};
+const rm = (text: string, lang: "en" | "zh" = "en", isPrivate = true) => botReply(text, lang, load, isPrivate, NOW, { id: 7, pings, reminders });
+const remindOn = (await rm(`/start r${T}_${NOW + 600}_86400_30`))!;
+assert.match(remindOn, /every day, for up to 30 rounds\. First reminder: 2026-09-18 15:33 UTC/);
+assert.match(remindOn, /nothing else: not the market, the amount, your orders or your wallet/, "the privacy cost is stated");
+assert.deepEqual([...plans], [[`7:${T}`, { tag: T, next: NOW + 600, every: 86_400, left: 30, lang: "en" }]], "only the schedule is kept");
+assert.match((await rm(`/start r${T}_${NOW + 600}_21600_1`, "zh"))!, /每 6 小时一次，最多 1 轮/, "the same plan again updates its schedule");
+assert.equal(plans.size, 1);
+assert.match((await rm(`/start r1111aaaa_${NOW}_3600_2`))!, /every hour/);
+assert.match((await rm(`/start r2222bbbb_${NOW}_3600_2`))!, /already get reminders for 5 buy plans/, "the per-chat cap (2 in this fake)");
+assert.match((await rm(`/start r${T}_${NOW}_300_2`))!, /not a buy plan's reminder link/);
+assert.match((await rm(`/start r${T}_${NOW}_3600_2`, "en", false))!, /private chat/);
+assert.equal(await rm(`/start x${T}`), "Reminders for that buy plan are stopped and its schedule is deleted.");
+assert.equal(await rm(`/start x${T}`), "There were no reminders for that buy plan.");
+await pings.add(7, 5_965_816, "en");
+assert.equal(await rm("/stop"), "Settlement pings cancelled: 1. Buy plan reminders stopped: 1.", "/stop forgets pings and plans");
+assert.equal(plans.size, 0);
+
+const reminded: [number, string][] = [];
+const forgot: number[] = [];
+const rio = (due: { chat: number; left: number; lang: "en" | "zh" }[]) => ({
+  fire: async () => due,
+  send: async (chat: number, text: string) => {
+    if (chat === 666) throw Error("Telegram sendMessage: Forbidden: bot was blocked by the user");
+    if (chat === 500) throw Error("Telegram sendMessage: Too Many Requests");
+    reminded.push([chat, text]);
+  },
+  forget: async (chat: number) => (forgot.push(chat), 1),
+});
+assert.deepEqual(await sendBuyReminders(NOW, rio([{ chat: 1, left: 1, lang: "en" }])), { skipped: "no bot token" });
+process.env["TELEGRAM_BOT_TOKEN"] = "test";
+assert.deepEqual(await sendBuyReminders(NOW, rio([])), { idle: true });
+const rr = await sendBuyReminders(NOW, rio([{ chat: 1, left: 4, lang: "en" }, { chat: 2, left: 0, lang: "zh" }, { chat: 666, left: 2, lang: "en" }, { chat: 500, left: 2, lang: "en" }]));
+assert.deepEqual(rr, { reminded: 4, sent: 2, failed: 2 });
+assert.match(reminded[0]![1], /next round is due\. If the dashboard is open and unlocked it runs by itself/);
+assert.doesNotMatch(reminded[0]![1], /last reminder/);
+assert.match(reminded[1]![1], /定投计划下一轮已到期[\s\S]*最后一次提醒/, "the last round says so, in the chat's language");
+assert.deepEqual(forgot, [666], "a chat that blocked the bot loses its plans; a passing failure does not");
+delete process.env["TELEGRAM_BOT_TOKEN"];
 
 // a failing endpoint gives a plain message, never a stack
 assert.match((await botReply("/fees", "en", async () => Promise.reject(Error("boom")), true))!, /not available right now/);

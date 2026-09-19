@@ -3,7 +3,7 @@
 // last close, plus ETH/USD, and during the session one message per stock per day that moves 3% or more. Nothing about
 // the protocol or anyone's activity is ever sent. Runs as a pool cron step.
 import { rpc } from "./db";
-import { dbSubscribers, telegram, type Lang, type Subscribers } from "./telegram";
+import { dbSubscribers, gone, telegram, type Lang, type Subscribers } from "./telegram";
 
 const OPEN_MIN = 9 * 60 + 30; // 09:30 New York
 const CLOSE_MIN = 16 * 60; // 16:00 New York
@@ -112,9 +112,6 @@ interface Venue {
   assets: { symbol: string; ref_usd: string | null; ref_status: string | null }[];
   eth_usd: { usd: string; status: string } | null;
 }
-
-// A chat that blocked the bot, left the group or was deleted: stop sending to it.
-const gone = (e: unknown) => /Forbidden|chat not found|user is deactivated|group chat was upgraded/i.test(String((e as Error)?.message ?? e));
 
 /**
  * Pool cron step: sends what feedPosts decides to every subscribed chat. A chat that is gone is unsubscribed; other

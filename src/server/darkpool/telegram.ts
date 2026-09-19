@@ -13,6 +13,7 @@ const EXPLORER = "https://robinhoodchain.blockscout.com/address/";
 const SETTLE_DEADLINE = 3_600; // DarkPoolShieldedPool.SETTLE_DEADLINE
 const MAX_PINGS = 20; // windows one chat can wait on at once
 const MAX_ALERTS = 10; // price alerts one chat can hold
+const MAX_REMINDERS = 5; // buy plans one chat can be reminded about
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
@@ -36,6 +37,9 @@ export async function telegram(method: string, body: Record<string, unknown>) {
   if (!out?.ok) throw Error(`Telegram ${method}: ${out?.description ?? res.status}`);
   return out.result;
 }
+
+/** A chat that blocked the bot, left the group or was deleted: stop sending to it. */
+export const gone = (e: unknown) => /Forbidden|chat not found|user is deactivated|group chat was upgraded/i.test(String((e as Error)?.message ?? e));
 
 export type Lang = "en" | "zh";
 /** Reads one of the site's public endpoints (`/api/venue` …) and returns its `data`. */
@@ -79,7 +83,7 @@ const C = {
       "/fees · venue and relayer fees",
       "/dark · the DARK token",
       "/howto · how to trade privately",
-      "/stop · cancel settlement pings",
+      "/stop · cancel settlement pings and buy reminders",
       "",
       "🔒 This bot never asks for your seed phrase, keys or a signature, and cannot trade for you. Anyone who does is not us.",
     ],
@@ -148,7 +152,21 @@ const C = {
     pingBad: "That is not a window an order can be waiting on now. Use the Telegram link on an order in the dashboard.",
     pingFull: `You are already waiting on ${MAX_PINGS} windows. /stop clears them.`,
     pingPrivate: "Pings only work in a private chat with me.",
-    stopped: (n: number) => (n ? `Settlement pings cancelled: ${n}.` : "You had no settlement pings waiting."),
+    stopped: (pings: number, plans: number) =>
+      pings || plans
+        ? [pings ? `Settlement pings cancelled: ${pings}.` : "", plans ? `Buy plan reminders stopped: ${plans}.` : ""].filter(Boolean).join(" ")
+        : "You had no settlement pings or buy reminders waiting.",
+    remindOn: (every: number, left: number, first: number) => [
+      `⏰ Done. I'll remind you here when your recurring buy's next round is due: every ${EVERY.en(every)}, for up to ${left} round${left === 1 ? "" : "s"}. First reminder: ${utcDay(first)}.`,
+      "",
+      "This tells DarkpoolFi that this Telegram account has a buy plan and when it runs, and nothing else: not the market, the amount, your orders or your wallet.",
+      "The plan still buys only while the dashboard is open and unlocked. The plan's “Stop Telegram reminders” link, or /stop, deletes the schedule.",
+    ],
+    remindBad: "That is not a buy plan's reminder link. Use the Telegram link on a plan in the dashboard's Recurring buy panel.",
+    remindFull: `You already get reminders for ${MAX_REMINDERS} buy plans. /stop clears them.`,
+    remindOff: (n: number) => (n ? "Reminders for that buy plan are stopped and its schedule is deleted." : "There were no reminders for that buy plan."),
+    remind: (left: number) =>
+      `⏰ Your recurring buy's next round is due. If the dashboard is open and unlocked it runs by itself; otherwise open it and unlock your account: ${SITE}/dashboard${left ? "" : "\n\nThat was this plan's last reminder."}`,
     settled: (n: number) => `🔔 Window ${n} has settled. Open the dashboard to see your fill: ${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ Window ${n} closed without settling in at least one market. If your order was there, reclaim your lock in the dashboard: ${SITE}/dashboard`,
     late: (n: number) => `⚠️ Window ${n} was not settled in time. If your order was there, you can reclaim your lock in the dashboard: ${SITE}/dashboard`,
@@ -187,7 +205,7 @@ const C = {
       "/fees · 场所费与中继费",
       "/dark · DARK 代币",
       "/howto · 如何私密交易",
-      "/stop · 取消结算提醒",
+      "/stop · 取消结算提醒与买入提醒",
       "",
       "🔒 本机器人绝不会索要你的助记词、密钥或签名，也不能替你交易。凡是索要的都不是我们。",
     ],
@@ -256,7 +274,21 @@ const C = {
     pingBad: "这不是订单当前可能在等待的窗口。请使用仪表盘中订单上的 Telegram 链接。",
     pingFull: `你已在等待 ${MAX_PINGS} 个窗口。/stop 可清除它们。`,
     pingPrivate: "提醒仅在与我的私聊中可用。",
-    stopped: (n: number) => (n ? `已取消结算提醒：${n} 个。` : "你没有待发送的结算提醒。"),
+    stopped: (pings: number, plans: number) =>
+      pings || plans
+        ? [pings ? `已取消结算提醒：${pings} 个。` : "", plans ? `已停止买入计划提醒：${plans} 个。` : ""].filter(Boolean).join("")
+        : "你没有待发送的结算提醒或买入提醒。",
+    remindOn: (every: number, left: number, first: number) => [
+      `⏰ 已设置。定投计划的下一轮到期时我会在这里提醒你：每 ${EVERY.zh(every)}一次，最多 ${left} 轮。首次提醒：${utcDay(first)}。`,
+      "",
+      "DarkpoolFi 由此只会知道这个 Telegram 账户有一个买入计划及其执行时间：不会知道市场、金额、你的订单或钱包。",
+      "计划仍然只会在仪表盘打开且已解锁时买入。计划上的“停止 Telegram 提醒”链接或 /stop 会删除该时间表。",
+    ],
+    remindBad: "这不是买入计划的提醒链接。请使用仪表盘“定投买入”面板中计划上的 Telegram 链接。",
+    remindFull: `你已为 ${MAX_REMINDERS} 个买入计划设置提醒。/stop 可清除它们。`,
+    remindOff: (n: number) => (n ? "该买入计划的提醒已停止，时间表已删除。" : "该买入计划没有提醒。"),
+    remind: (left: number) =>
+      `⏰ 你的定投计划下一轮已到期。如果仪表盘已打开并解锁，它会自动执行；否则请打开仪表盘并解锁账户：${SITE}/dashboard${left ? "" : "\n\n这是该计划的最后一次提醒。"}`,
     settled: (n: number) => `🔔 窗口 ${n} 已结算。打开仪表盘查看你的成交：${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ 窗口 ${n} 在至少一个市场中未结算即关闭。如果你的订单在其中，请在仪表盘中取回锁定资金：${SITE}/dashboard`,
     late: (n: number) => `⚠️ 窗口 ${n} 未能按时结算。如果你的订单在其中，可在仪表盘中取回锁定资金：${SITE}/dashboard`,
@@ -329,13 +361,51 @@ export const dbPings: Pings = {
   stop: (chat) => rpc<number>("dark_tg_ping_stop", { p_chat: chat }),
 };
 
+/** A buy plan's schedule (TG-4): a random tag, the next round (unix seconds), the interval and the rounds left. */
+export interface Schedule {
+  tag: string;
+  next: number;
+  every: number;
+  left: number;
+}
+/** Where buy-plan reminders are kept (TG-4). `remove` with no tag forgets every plan of the chat. */
+export interface Reminders {
+  add(chat: number, s: Schedule, lang: Lang): Promise<"ok" | "full">;
+  remove(chat: number, tag: string | null): Promise<number>;
+}
+export const dbReminders: Reminders = {
+  add: (chat, s, lang) =>
+    rpc<"ok" | "full">("dark_tg_reminder_add", { p_chat: chat, p_tag: s.tag, p_next: s.next, p_every: s.every, p_remaining: s.left, p_lang: lang, p_max: MAX_REMINDERS }),
+  remove: (chat, tag) => rpc<number>("dark_tg_reminder_remove", { p_chat: chat, p_tag: tag }),
+};
+
+/**
+ * A plan's schedule from the dashboard's deep link, `r<tag>_<next>_<every>_<left>`, or null when it is not one a plan
+ * could have. A round already due is being bought by the open dashboard, so reminders start at the round after it,
+ * chosen as the dashboard chooses it (public/shielded.js dcaSlot).
+ */
+export function parseSchedule(arg: string, now: number): Schedule | null {
+  const m = /^r([0-9a-f]{8})_(\d{1,11})_(\d{1,7})_(\d{1,3})$/.exec(arg);
+  if (!m) return null;
+  const [tag, next, every, left] = [m[1]!, Number(m[2]), Number(m[3]), Number(m[4])];
+  if (every < 3_600 || every > 2_678_400 || left < 1 || left > 365 || next > now + 2 * every) return null;
+  return { tag, every, left, next: next > now ? next : next + every * Math.max(0, Math.ceil((now + every / 2 - next) / every)) };
+}
+
+/** "every day", "every 6 hours" */
+const EVERY = {
+  en: (s: number) => (s % 86_400 === 0 ? (s === 86_400 ? "day" : `${s / 86_400} days`) : s === 3_600 ? "hour" : `${+(s / 3_600).toFixed(2)} hours`),
+  zh: (s: number) => (s % 86_400 === 0 ? `${s / 86_400} 天` : `${+(s / 3_600).toFixed(2)} 小时`),
+};
+const utcDay = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+
 export async function botReply(
   text: string,
   lang: Lang,
   load: Load,
   isPrivate: boolean,
   now = Date.now() / 1000,
-  chat?: { id: number; pings: Pings; alerts?: Alerts; feed?: Subscribers },
+  chat?: { id: number; pings: Pings; alerts?: Alerts; feed?: Subscribers; reminders?: Reminders },
 ): Promise<string | null> {
   const [head = "", arg = "", ...rest] = text.trim().split(/\s+/);
   if (!head.startsWith("/")) return isPrivate ? C[lang].start.join("\n") : null;
@@ -345,6 +415,15 @@ export async function botReply(
   try {
     switch (cmd) {
       case "start": {
+        // deep links from a buy plan in the dashboard (TG-4): r<tag>_<next>_<every>_<left> to be reminded, x<tag> to stop
+        if (/^[rx]/.test(arg)) {
+          if (!isPrivate || !chat?.reminders) return c.pingPrivate;
+          const stop = /^x([0-9a-f]{8})$/.exec(arg);
+          if (stop) return c.remindOff(await chat.reminders.remove(chat.id, stop[1]!));
+          const plan = parseSchedule(arg, now);
+          if (!plan) return c.remindBad;
+          return (await chat.reminders.add(chat.id, plan, lang)) === "full" ? c.remindFull : c.remindOn(plan.every, plan.left, plan.next).join("\n");
+        }
         // a deep link from an order in the dashboard: t.me/<bot>?start=w<window>
         const m = /^w(\d{1,12})$/.exec(arg);
         if (!m) return c.start.join("\n");
@@ -355,7 +434,7 @@ export async function botReply(
         return (await chat.pings.add(chat.id, epoch, lang)) === "full" ? c.pingFull : c.pingOn(epoch).join("\n");
       }
       case "stop":
-        return chat ? c.stopped(await chat.pings.stop(chat.id)) : null;
+        return chat ? c.stopped(await chat.pings.stop(chat.id), chat.reminders ? await chat.reminders.remove(chat.id, null) : 0) : null;
       case "alert": {
         // /alert AAPL above 350 · /alert TSLA < 300
         if (!chat?.alerts) return null;
@@ -519,6 +598,35 @@ export async function sendPriceAlerts(
   return { fired: fired.length, sent, ...(failed ? { failed } : {}) };
 }
 
+/**
+ * Pool cron step (TG-4): reminds every chat whose buy plan has a round due, once per round; the database moves each plan
+ * to its next round or forgets it after the last. A chat that is gone has all its plans forgotten.
+ */
+export async function sendBuyReminders(
+  now = Date.now() / 1000,
+  io = {
+    fire: (at: number) => rpc<{ chat: number; left: number; lang: Lang }[]>("dark_tg_reminders_fire", { p_now: Math.floor(at) }),
+    send: (chat: number, text: string) => telegram("sendMessage", { chat_id: chat, text, link_preview_options: { is_disabled: true } }),
+    forget: (chat: number) => dbReminders.remove(chat, null),
+  },
+) {
+  if (!process.env["TELEGRAM_BOT_TOKEN"]?.trim()) return { skipped: "no bot token" };
+  const due = await io.fire(now);
+  if (!due.length) return { idle: true };
+  let sent = 0;
+  let failed = 0;
+  for (const r of due) {
+    try {
+      await io.send(r.chat, (C[r.lang] ?? C.en).remind(r.left));
+      sent++;
+    } catch (e) {
+      failed++;
+      if (gone(e)) await io.forget(r.chat);
+    }
+  }
+  return { reminded: due.length, sent, ...(failed ? { failed } : {}) };
+}
+
 /** The command menu Telegram shows, per language (set by scripts/telegram-setup.ts). */
 export const COMMANDS: Record<Lang, { command: string; description: string }[]> = {
   en: [
@@ -535,7 +643,7 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "fees", description: "Venue and relayer fees" },
     { command: "dark", description: "The DARK token" },
     { command: "howto", description: "How to trade privately" },
-    { command: "stop", description: "Cancel settlement pings" },
+    { command: "stop", description: "Cancel settlement pings and buy reminders" },
     { command: "help", description: "What this bot does" },
   ],
   zh: [
@@ -552,7 +660,7 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "fees", description: "场所费与中继费" },
     { command: "dark", description: "DARK 代币" },
     { command: "howto", description: "如何私密交易" },
-    { command: "stop", description: "取消结算提醒" },
+    { command: "stop", description: "取消结算提醒与买入提醒" },
     { command: "help", description: "机器人功能" },
   ],
 };

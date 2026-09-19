@@ -54,7 +54,7 @@ const SERVER = [...walk("src/server/darkpool"), ...walk("src/routes/api")].filte
 // Arguments that are code, not copy: selectors, attribute and event names, URLs, ABIs, storage keys.
 const CODE_CALLS = /^(\$\$?|querySelector(All)?|getElementById|closest|matches|getAttribute|setAttribute|removeAttribute|toggleAttribute|hasAttribute|addEventListener|removeEventListener|add|remove|toggle|contains|createElement|fetch|get|post|rpc|getFunction|encodeFunctionData|decodeFunctionResult|parseLog|getItem|setItem|removeItem|matchMedia|setProperty|getPropertyValue|request|Interface|Contract|env|load|import|require|replace|split|join|padStart|padEnd|startsWith|endsWith|includes|indexOf|test|match|toLocaleString|NumberFormat|DateTimeFormat|dispatchEvent|CustomEvent|Event|keccak256|id|hashtext|formatUnits|parseUnits|toUtf8Bytes|scrollIntoView|animate|postMessage|alert|log|error|warn|info|debug)$/;
 const CODE_TEXT = (s) =>
-  /^[#.[(@:/-]/.test(s) || // selectors, media queries, paths
+  /^[#.[(:/-]|^@(media|supports|import|keyframes|font-face|container)\b/.test(s) || // selectors, at-rules, paths
   /^[a-z0-9_$-]+$/.test(s) || // identifiers, statuses, class names
   /^[A-Z0-9_]{1,5}$/.test(s) || // tickers, short constants
   /^(Arrow\w+|Home|End|Tab|Escape|Enter|INPUT|SELECT|TEXTAREA|BUTTON|DELETE|PATCH|Content-Type|Authorization)$/.test(s) ||

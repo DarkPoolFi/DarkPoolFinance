@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { botReply, dbAlerts, dbPings, dbSubscribers, isTelegramAuthorized, siteLoader } from "@/server/darkpool/telegram";
+import { botReply, dbAlerts, dbPings, dbReminders, dbSubscribers, isTelegramAuthorized, siteLoader } from "@/server/darkpool/telegram";
 
 interface Update {
   message?: { chat: { id: number; type: string }; text?: string; from?: { language_code?: string } };
@@ -17,7 +17,7 @@ export const Route = createFileRoute("/api/telegram")({
         const m = update.message;
         if (!m?.text) return new Response(null, { status: 200 });
         const lang = m.from?.language_code?.startsWith("zh") ? "zh" : "en";
-        const text = await botReply(m.text, lang, siteLoader(new URL(request.url).origin), m.chat.type === "private", Date.now() / 1000, { id: m.chat.id, pings: dbPings, alerts: dbAlerts, feed: dbSubscribers });
+        const text = await botReply(m.text, lang, siteLoader(new URL(request.url).origin), m.chat.type === "private", Date.now() / 1000, { id: m.chat.id, pings: dbPings, alerts: dbAlerts, feed: dbSubscribers, reminders: dbReminders });
         if (!text) return new Response(null, { status: 200 });
         return Response.json({ method: "sendMessage", chat_id: m.chat.id, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
       },
