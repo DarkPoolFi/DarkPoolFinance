@@ -70,6 +70,19 @@ assert.equal(translate("the pool rejects this order: execution reverted"), "资�
 zh("One of these notes was already spent. Your balance is refreshing; try again in a minute.");
 zh("The proof did not verify. Refresh the page and try again.");
 
+// page copy written with entities is keyed as the browser decodes it (&rsquo; → ’, &middot; → ·)
+zh("Recipient’s shielded address");
+zh("Every window · 5 minutes");
+// tab titles, API errors (http.ts fail) and business rules raised in SQL (P0001)
+zh("Dashboard — DarkpoolFi");
+zh("Minimum withdrawal is 0.0011 ETH");
+zh("The private balance no longer takes new orders. Move to the Shielded pool tab.");
+zh("withdrawal 42 still has a tranche in flight");
+// dashboard copy that used to be concatenated
+zh("0.25 ETH of it arrives with the next tree batch.");
+zh("3 order results");
+zh("AAPL selected. Your order ticket is ready.");
+
 // pieces joined with + rather than a template are keyed by hand
 assert.equal(translate("Window 5965261 · 300 second window"), "窗口 5965261 · 300 秒窗口");
 assert.equal(translate("Active interest"), "活跃关注度");

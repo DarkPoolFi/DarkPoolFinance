@@ -149,16 +149,22 @@
     .then((d) => {
       dict = d;
       compile();
-      apply(document.body);
+      apply(document.documentElement); // the <title> too
       mountToggle();
       legalNotice();
-      // Dashboard panels and status messages render after load; translate them as they appear.
+      // Dashboard panels and status messages render after load; translate them as they appear, and labels such as
+      // "Hide balances" when a script swaps them.
       new MutationObserver((records) => {
         for (const r of records) {
           for (const n of r.addedNodes) apply(n);
           if (r.type === 'characterData') apply(r.target);
+          if (r.type === 'attributes') {
+            const v = r.target.getAttribute(r.attributeName);
+            const hit = v && translate(norm(v));
+            if (hit && hit !== v) r.target.setAttribute(r.attributeName, hit);
+          }
         }
-      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+      }).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
     })
     .catch(() => mountToggle());
 })();
