@@ -1,8 +1,8 @@
 // bun src/server/darkpool/telegram.check.ts
-// Telegram bot (TG-0 / TG-1): every command answers from the public endpoints' real shapes, in both languages; the
+// Telegram bot (TG-0 / TG-1 / TG-3 / TG-5): every command answers from the public endpoints' real shapes, in both languages; the
 // webhook refuses a request without Telegram's secret; the bot stays quiet in groups unless addressed with a command.
 import assert from "node:assert/strict";
-import { botReply, isTelegramAuthorized, sendSettlementPings, type Load } from "./telegram";
+import { botReply, isTelegramAuthorized, parseUsd, sendPriceAlerts, sendSettlementPings, type Load } from "./telegram";
 
 // captured from https://darkpoolfi.tech/api/* on 2026-09-18, trimmed
 const DATA: Record<string, unknown> = {
@@ -151,6 +151,68 @@ await sendSettlementPings(end + 3_600, io([{ epoch: W, chats: [{ chat: 1, lang: 
 assert.match(out[0]![1], /was not settled in time/, "past the deadline it says so, and the lock can be reclaimed");
 delete process.env["TELEGRAM_BOT_TOKEN"];
 assert.deepEqual(await sendSettlementPings(end + 90, io([])), { skipped: "no bot token" });
+
+// TG-3: price alerts
+assert.equal(parseUsd("250"), 250_000_000n);
+assert.equal(parseUsd("$1,250.5"), 1_250_500_000n);
+assert.equal(parseUsd("0.000001"), 1n);
+for (const bad of ["0", "-5", "abc", "1.1234567", "", "12345678"]) assert.equal(parseUsd(bad), null, bad);
+const held: { id: number; chat: number; symbol: string; above: boolean; usd: string }[] = [];
+let nextId = 1;
+const alerts = {
+  add: async (chat: number, symbol: string, above: boolean, usd: bigint) => {
+    if (symbol !== "AAPL") return { status: "market" as const };
+    if ((above && 335_000_000n >= usd) || (!above && 335_000_000n <= usd)) return { status: "already" as const, ref: "335000000" };
+    if (held.filter((a) => a.chat === chat).length >= 2) return { status: "full" as const };
+    held.push({ id: nextId++, chat, symbol, above, usd: String(usd) });
+    return { status: "ok" as const, ref: "335000000" };
+  },
+  list: async (chat: number) => held.filter((a) => a.chat === chat),
+  remove: async (chat: number, id: number | null) => {
+    const before = held.length;
+    for (let i = held.length - 1; i >= 0; i--) if (held[i]!.chat === chat && (id === null || held[i]!.id === id)) held.splice(i, 1);
+    return before - held.length;
+  },
+};
+const al = (text: string, lang: "en" | "zh" = "en") => botReply(text, lang, load, true, NOW, { id: 7, pings, alerts });
+assert.match((await al("/alert"))!, /\/alert AAPL above 350/, "usage");
+assert.match((await al("/alert AAPL sideways 350"))!, /Set a price alert/);
+assert.match((await al("/alert AAPL above lots"))!, /Set a price alert/);
+assert.equal(await al("/alert aapl above 350"), "🔔 I'll tell you when AAPL goes above <b>$350.00</b> (now $335.38). It fires once, then clears.".replace("$335.38", "$335.00"));
+assert.match((await al("/alert AAPL < 300", "zh"))!, /当 AAPL 低于 <b>\$300\.00<\/b> 时我会通知你（当前 \$335\.00）/);
+assert.match((await al("/alert AAPL above 300"))!, /AAPL is already above \$300\.00 \(now \$335\.00\)/);
+assert.match((await al("/alert AAPL over 400"))!, /already have 10 alerts/, "cap reached (2 in this fake)");
+assert.match((await al("/alert <b> above 1"))!, /No market called &lt;B&gt;\. Markets: AAPL, TSLA/);
+assert.equal(await al("/alerts"), "<b>Your price alerts</b>\n1. AAPL above $350.00\n2. AAPL below $300.00");
+assert.equal(await al("/unalert 3"), "No such alert. /alerts lists yours with their numbers.");
+assert.equal(await al("/unalert 1"), "Price alerts removed: 1.");
+assert.equal(await al("/alerts"), "<b>Your price alerts</b>\n1. AAPL below $300.00");
+assert.equal(await al("/unalert all"), "Price alerts removed: 1.");
+assert.match((await al("/alerts"))!, /no price alerts/);
+
+const told: [number, string][] = [];
+process.env["TELEGRAM_BOT_TOKEN"] = "test";
+const firing = (list: { chat: number; symbol: string; above: boolean; usd: string; ref: string; lang: "en" | "zh" }[]) => ({
+  fire: async () => list,
+  send: async (chat: number, text: string) => {
+    if (chat === 666) throw Error("Forbidden: bot was blocked by the user");
+    told.push([chat, text]);
+  },
+});
+assert.deepEqual(await sendPriceAlerts(firing([])), { idle: true });
+assert.deepEqual(
+  await sendPriceAlerts(
+    firing([
+      { chat: 1, symbol: "AAPL", above: true, usd: "350000000", ref: "351100000", lang: "en" },
+      { chat: 2, symbol: "TSLA", above: false, usd: "300000000", ref: "299500000", lang: "zh" },
+      { chat: 666, symbol: "AAPL", above: true, usd: "340000000", ref: "351100000", lang: "en" },
+    ]),
+  ),
+  { fired: 3, sent: 2, failed: 1 },
+);
+assert.equal(told[0]![1], "🔔 AAPL is above $350.00: the Chainlink reference is now <b>$351.10</b>. This alert is now cleared.");
+assert.match(told[1]![1], /TSLA 已低于 \$300\.00：Chainlink 参考价现为 <b>\$299\.50<\/b>/);
+delete process.env["TELEGRAM_BOT_TOKEN"];
 
 // a failing endpoint gives a plain message, never a stack
 assert.match((await botReply("/fees", "en", async () => Promise.reject(Error("boom")), true))!, /not available right now/);

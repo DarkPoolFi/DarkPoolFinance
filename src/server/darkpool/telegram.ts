@@ -12,6 +12,7 @@ const DARK = "0x073407b2ba247e88a3183849ec2817512171d7ef";
 const EXPLORER = "https://robinhoodchain.blockscout.com/address/";
 const SETTLE_DEADLINE = 3_600; // DarkPoolShieldedPool.SETTLE_DEADLINE
 const MAX_PINGS = 20; // windows one chat can wait on at once
+const MAX_ALERTS = 10; // price alerts one chat can hold
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
@@ -53,6 +54,7 @@ export function siteLoader(origin: string): Load {
 }
 const cache = new Map<string, { at: number; data: unknown }>();
 
+const usd6 = (micro: bigint) => usd(String(micro));
 const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const usd = (micro: string | number) => `$${(Number(micro) / 1e6).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const eth = (wei: string | bigint) => String(Number(formatUnits(wei, 18)).toPrecision(4)).replace(/\.?0+$/, "");
@@ -69,6 +71,7 @@ const C = {
       "",
       "/window · the crossing window now",
       "/price AAPL · a reference price",
+      "/alert AAPL above 350 · a price alert",
       "/markets · every market",
       "/tape · the delayed public tape",
       "/solvency · reserves against what is owed",
@@ -148,6 +151,20 @@ const C = {
     settled: (n: number) => `🔔 Window ${n} has settled. Open the dashboard to see your fill: ${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ Window ${n} closed without settling in at least one market. If your order was there, reclaim your lock in the dashboard: ${SITE}/dashboard`,
     late: (n: number) => `⚠️ Window ${n} was not settled in time. If your order was there, you can reclaim your lock in the dashboard: ${SITE}/dashboard`,
+    alertUsage: [
+      "Set a price alert: <code>/alert AAPL above 350</code> or <code>/alert TSLA below 300</code>.",
+      "I check the Chainlink reference every minute and message you once when it crosses. /alerts lists yours; /unalert 1 or /unalert all removes them.",
+    ],
+    alertOn: (sym: string, above: boolean, price: string, now: string | null) =>
+      `🔔 I'll tell you when ${sym} goes ${above ? "above" : "below"} <b>${price}</b>${now ? ` (now ${now})` : ""}. It fires once, then clears.`,
+    alertAlready: (sym: string, above: boolean, price: string, now: string) => `${sym} is already ${above ? "above" : "below"} ${price} (now ${now}).`,
+    alertFull: `You already have ${MAX_ALERTS} alerts. /unalert removes some.`,
+    alertNone: "You have no price alerts. Set one with <code>/alert AAPL above 350</code>.",
+    alertList: "<b>Your price alerts</b>",
+    alertRow: (n: number, sym: string, above: boolean, price: string) => `${n}. ${sym} ${above ? "above" : "below"} ${price}`,
+    alertGone: (n: number) => (n ? `Price alerts removed: ${n}.` : "No such alert. /alerts lists yours with their numbers."),
+    alertFired: (sym: string, above: boolean, price: string, now: string) =>
+      `🔔 ${sym} is ${above ? "above" : "below"} ${price}: the Chainlink reference is now <b>${now}</b>. This alert is now cleared.`,
   },
   zh: {
     start: [
@@ -156,6 +173,7 @@ const C = {
       "",
       "/window · 当前撮合窗口",
       "/price AAPL · 参考价格",
+      "/alert AAPL above 350 · 价格提醒",
       "/markets · 全部市场",
       "/tape · 延迟公开成交记录",
       "/solvency · 储备与应付对比",
@@ -235,6 +253,20 @@ const C = {
     settled: (n: number) => `🔔 窗口 ${n} 已结算。打开仪表盘查看你的成交：${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ 窗口 ${n} 在至少一个市场中未结算即关闭。如果你的订单在其中，请在仪表盘中取回锁定资金：${SITE}/dashboard`,
     late: (n: number) => `⚠️ 窗口 ${n} 未能按时结算。如果你的订单在其中，可在仪表盘中取回锁定资金：${SITE}/dashboard`,
+    alertUsage: [
+      "设置价格提醒：<code>/alert AAPL above 350</code> 或 <code>/alert TSLA below 300</code>。",
+      "我每分钟检查一次 Chainlink 参考价，穿越时通知你一次。/alerts 列出你的提醒；/unalert 1 或 /unalert all 可删除。",
+    ],
+    alertOn: (sym: string, above: boolean, price: string, now: string | null) =>
+      `🔔 当 ${sym} ${above ? "高于" : "低于"} <b>${price}</b> 时我会通知你${now ? `（当前 ${now}）` : ""}。提醒只触发一次，随后清除。`,
+    alertAlready: (sym: string, above: boolean, price: string, now: string) => `${sym} 已经${above ? "高于" : "低于"} ${price}（当前 ${now}）。`,
+    alertFull: `你已有 ${MAX_ALERTS} 个提醒。可用 /unalert 删除一些。`,
+    alertNone: "你没有价格提醒。可用 <code>/alert AAPL above 350</code> 设置。",
+    alertList: "<b>你的价格提醒</b>",
+    alertRow: (n: number, sym: string, above: boolean, price: string) => `${n}. ${sym} ${above ? "高于" : "低于"} ${price}`,
+    alertGone: (n: number) => (n ? `已删除价格提醒：${n} 个。` : "没有这个提醒。/alerts 会列出你的提醒及编号。"),
+    alertFired: (sym: string, above: boolean, price: string, now: string) =>
+      `🔔 ${sym} 已${above ? "高于" : "低于"} ${price}：Chainlink 参考价现为 <b>${now}</b>。此提醒已清除。`,
   },
 };
 const BANDS: Record<string, string> = { Thin: "低", Balanced: "均衡", Active: "活跃" };
@@ -248,6 +280,27 @@ export interface Pings {
   add(chat: number, epoch: number, lang: Lang): Promise<"ok" | "full">;
   stop(chat: number): Promise<number>;
 }
+/** Where price alerts are kept (TG-3). Prices are micro-USD strings, as dark_refs. */
+export interface Alerts {
+  add(chat: number, symbol: string, above: boolean, usd: bigint, lang: Lang): Promise<{ status: "ok" | "already" | "market" | "full"; ref?: string }>;
+  list(chat: number): Promise<{ id: number; symbol: string; above: boolean; usd: string }[]>;
+  remove(chat: number, id: number | null): Promise<number>;
+}
+export const dbAlerts: Alerts = {
+  add: (chat, symbol, above, usd, lang) =>
+    rpc("dark_tg_alert_add", { p_chat: chat, p_symbol: symbol, p_above: above, p_usd: String(usd), p_lang: lang, p_max: MAX_ALERTS }),
+  list: (chat) => rpc("dark_tg_alerts_list", { p_chat: chat }),
+  remove: (chat, id) => rpc<number>("dark_tg_alert_remove", { p_chat: chat, p_id: id }),
+};
+
+/** "$250", "250.5" → micro-USD; null when it is not a positive price with up to 6 decimals. */
+export function parseUsd(text: string): bigint | null {
+  const m = /^\$?(\d{1,7})(?:\.(\d{1,6}))?$/.exec(text.replace(/,/g, ""));
+  if (!m) return null;
+  const v = BigInt(m[1]!) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0"));
+  return v > 0n ? v : null;
+}
+
 export const dbPings: Pings = {
   add: (chat, epoch, lang) => rpc<"ok" | "full">("dark_tg_ping_add", { p_chat: chat, p_epoch: epoch, p_lang: lang, p_max: MAX_PINGS }),
   stop: (chat) => rpc<number>("dark_tg_ping_stop", { p_chat: chat }),
@@ -259,9 +312,9 @@ export async function botReply(
   load: Load,
   isPrivate: boolean,
   now = Date.now() / 1000,
-  chat?: { id: number; pings: Pings },
+  chat?: { id: number; pings: Pings; alerts?: Alerts },
 ): Promise<string | null> {
-  const [head = "", arg = ""] = text.trim().split(/\s+/);
+  const [head = "", arg = "", ...rest] = text.trim().split(/\s+/);
   if (!head.startsWith("/")) return isPrivate ? C[lang].start.join("\n") : null;
   const cmd = head.slice(1).split("@")[0]!.toLowerCase();
   const c = C[lang];
@@ -280,6 +333,32 @@ export async function botReply(
       }
       case "stop":
         return chat ? c.stopped(await chat.pings.stop(chat.id)) : null;
+      case "alert": {
+        // /alert AAPL above 350 · /alert TSLA < 300
+        if (!chat?.alerts) return null;
+        const dir = (rest[0] ?? "").toLowerCase();
+        const above = ["above", "over", ">"].includes(dir) ? true : ["below", "under", "<"].includes(dir) ? false : null;
+        const price = parseUsd(rest[1] ?? "");
+        if (!arg || above === null || price === null || rest.length !== 2) return c.alertUsage.join("\n");
+        const sym = esc(arg.toUpperCase());
+        const r = await chat.alerts.add(chat.id, arg.toUpperCase(), above, price, lang);
+        if (r.status === "market") return c.noMarket(sym, (await load("/api/venue")).assets.map((a: { symbol: string }) => a.symbol).join(", "));
+        if (r.status === "full") return c.alertFull;
+        if (r.status === "already") return c.alertAlready(sym, above, usd6(price), usd6(BigInt(r.ref!)));
+        return c.alertOn(sym, above, usd6(price), r.ref ? usd6(BigInt(r.ref)) : null);
+      }
+      case "alerts": {
+        if (!chat?.alerts) return null;
+        const mine = await chat.alerts.list(chat.id);
+        return mine.length ? [c.alertList, ...mine.map((a, i) => c.alertRow(i + 1, a.symbol, a.above, usd6(BigInt(a.usd))))].join("\n") : c.alertNone;
+      }
+      case "unalert": {
+        if (!chat?.alerts) return null;
+        if (arg.toLowerCase() === "all") return c.alertGone(await chat.alerts.remove(chat.id, null));
+        const n = Number(arg);
+        const target = Number.isInteger(n) && n >= 1 ? (await chat.alerts.list(chat.id))[n - 1] : undefined;
+        return c.alertGone(target ? await chat.alerts.remove(chat.id, target.id) : 0);
+      }
       case "help":
         return c.start.join("\n");
       case "window": {
@@ -380,11 +459,45 @@ export async function sendSettlementPings(
   return pinged.length ? { pinged, sent, ...(failed ? { failed } : {}) } : { idle: true, pending: pending.length }; // not "waiting": the cron log reads that as a stalled step
 }
 
+interface FiredAlert {
+  chat: number;
+  symbol: string;
+  above: boolean;
+  usd: string;
+  ref: string;
+  lang: Lang;
+}
+
+/** Pool cron step (TG-3): messages every price alert whose market's fresh reference has crossed it. Firing clears it. */
+export async function sendPriceAlerts(
+  io = {
+    fire: () => rpc<FiredAlert[]>("dark_tg_alerts_fire", {}),
+    send: (chat: number, text: string) => telegram("sendMessage", { chat_id: chat, text, parse_mode: "HTML" }),
+  },
+) {
+  if (!process.env["TELEGRAM_BOT_TOKEN"]?.trim()) return { skipped: "no bot token" };
+  const fired = await io.fire();
+  if (!fired.length) return { idle: true };
+  let sent = 0;
+  let failed = 0;
+  for (const a of fired) {
+    const c = C[a.lang] ?? C.en;
+    await io.send(a.chat, c.alertFired(esc(a.symbol), a.above, usd6(BigInt(a.usd)), usd6(BigInt(a.ref)))).then(
+      () => sent++,
+      () => failed++,
+    );
+  }
+  return { fired: fired.length, sent, ...(failed ? { failed } : {}) };
+}
+
 /** The command menu Telegram shows, per language (set by scripts/telegram-setup.ts). */
 export const COMMANDS: Record<Lang, { command: string; description: string }[]> = {
   en: [
     { command: "window", description: "The crossing window now" },
     { command: "price", description: "A reference price, e.g. /price AAPL" },
+    { command: "alert", description: "A price alert, e.g. /alert AAPL above 350" },
+    { command: "alerts", description: "Your price alerts" },
+    { command: "unalert", description: "Remove a price alert: /unalert 1 or all" },
     { command: "markets", description: "Every market" },
     { command: "tape", description: "The delayed public tape" },
     { command: "solvency", description: "Reserves against what is owed" },
@@ -397,6 +510,9 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
   zh: [
     { command: "window", description: "当前撮合窗口" },
     { command: "price", description: "参考价格，例如 /price AAPL" },
+    { command: "alert", description: "价格提醒，例如 /alert AAPL above 350" },
+    { command: "alerts", description: "你的价格提醒" },
+    { command: "unalert", description: "删除价格提醒：/unalert 1 或 all" },
     { command: "markets", description: "全部市场" },
     { command: "tape", description: "延迟公开成交记录" },
     { command: "solvency", description: "储备与应付对比" },
