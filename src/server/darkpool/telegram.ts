@@ -73,6 +73,7 @@ const C = {
       "/price AAPL · a reference price",
       "/alert AAPL above 350 · a price alert",
       "/markets · every market",
+      "/subscribe · market prices at the US open and close",
       "/tape · the delayed public tape",
       "/solvency · reserves against what is owed",
       "/fees · venue and relayer fees",
@@ -151,6 +152,11 @@ const C = {
     settled: (n: number) => `🔔 Window ${n} has settled. Open the dashboard to see your fill: ${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ Window ${n} closed without settling in at least one market. If your order was there, reclaim your lock in the dashboard: ${SITE}/dashboard`,
     late: (n: number) => `⚠️ Window ${n} was not settled in time. If your order was there, you can reclaim your lock in the dashboard: ${SITE}/dashboard`,
+    subscribed:
+      "📰 Subscribed. On US trading days I'll send the listed stocks' prices at the open (09:30 New York) and close (16:00), and any stock that moves 3% in a day. This keeps only this chat's ID and language. /unsubscribe stops it.",
+    alreadySubscribed: "You are already subscribed. /unsubscribe stops it.",
+    unsubscribed: "Unsubscribed. No more market updates here.",
+    notSubscribed: "You were not subscribed. /subscribe starts market updates.",
     alertUsage: [
       "Set a price alert: <code>/alert AAPL above 350</code> or <code>/alert TSLA below 300</code>.",
       "I check the Chainlink reference every minute and message you once when it crosses. /alerts lists yours; /unalert 1 or /unalert all removes them.",
@@ -175,6 +181,7 @@ const C = {
       "/price AAPL · 参考价格",
       "/alert AAPL above 350 · 价格提醒",
       "/markets · 全部市场",
+      "/subscribe · 美股开盘与收盘时的市场价格",
       "/tape · 延迟公开成交记录",
       "/solvency · 储备与应付对比",
       "/fees · 场所费与中继费",
@@ -253,6 +260,10 @@ const C = {
     settled: (n: number) => `🔔 窗口 ${n} 已结算。打开仪表盘查看你的成交：${SITE}/dashboard`,
     abandoned: (n: number) => `⚠️ 窗口 ${n} 在至少一个市场中未结算即关闭。如果你的订单在其中，请在仪表盘中取回锁定资金：${SITE}/dashboard`,
     late: (n: number) => `⚠️ 窗口 ${n} 未能按时结算。如果你的订单在其中，可在仪表盘中取回锁定资金：${SITE}/dashboard`,
+    subscribed: "📰 已订阅。美股交易日我会在开盘（纽约时间 09:30）和收盘（16:00）时发送上市股票的价格，以及当日涨跌达 3% 的股票。这只会保存此聊天的 ID 和语言。/unsubscribe 可停止。",
+    alreadySubscribed: "你已订阅。/unsubscribe 可停止。",
+    unsubscribed: "已取消订阅。这里将不再收到市场更新。",
+    notSubscribed: "你尚未订阅。/subscribe 可开始接收市场更新。",
     alertUsage: [
       "设置价格提醒：<code>/alert AAPL above 350</code> 或 <code>/alert TSLA below 300</code>。",
       "我每分钟检查一次 Chainlink 参考价，穿越时通知你一次。/alerts 列出你的提醒；/unalert 1 或 /unalert all 可删除。",
@@ -301,6 +312,18 @@ export function parseUsd(text: string): bigint | null {
   return v > 0n ? v : null;
 }
 
+/** Market feed subscriptions (TG-2): chat and language only. */
+export interface Subscribers {
+  add(chat: number, lang: Lang): Promise<boolean>; // false when already subscribed (language updated)
+  remove(chat: number): Promise<number>;
+  list(): Promise<{ chat: number; lang: Lang }[]>;
+}
+export const dbSubscribers: Subscribers = {
+  add: (chat, lang) => rpc<boolean>("dark_tg_feed_add", { p_chat: chat, p_lang: lang }),
+  remove: (chat) => rpc<number>("dark_tg_feed_remove", { p_chat: chat }),
+  list: () => rpc("dark_tg_feed_list", {}),
+};
+
 export const dbPings: Pings = {
   add: (chat, epoch, lang) => rpc<"ok" | "full">("dark_tg_ping_add", { p_chat: chat, p_epoch: epoch, p_lang: lang, p_max: MAX_PINGS }),
   stop: (chat) => rpc<number>("dark_tg_ping_stop", { p_chat: chat }),
@@ -312,7 +335,7 @@ export async function botReply(
   load: Load,
   isPrivate: boolean,
   now = Date.now() / 1000,
-  chat?: { id: number; pings: Pings; alerts?: Alerts },
+  chat?: { id: number; pings: Pings; alerts?: Alerts; feed?: Subscribers },
 ): Promise<string | null> {
   const [head = "", arg = "", ...rest] = text.trim().split(/\s+/);
   if (!head.startsWith("/")) return isPrivate ? C[lang].start.join("\n") : null;
@@ -347,6 +370,12 @@ export async function botReply(
         if (r.status === "already") return c.alertAlready(sym, above, usd6(price), usd6(BigInt(r.ref!)));
         return c.alertOn(sym, above, usd6(price), r.ref ? usd6(BigInt(r.ref)) : null);
       }
+      case "subscribe":
+        if (!chat?.feed) return null;
+        return (await chat.feed.add(chat.id, lang)) ? c.subscribed : c.alreadySubscribed;
+      case "unsubscribe":
+        if (!chat?.feed) return null;
+        return (await chat.feed.remove(chat.id)) ? c.unsubscribed : c.notSubscribed;
       case "alerts": {
         if (!chat?.alerts) return null;
         const mine = await chat.alerts.list(chat.id);
@@ -499,6 +528,8 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "alerts", description: "Your price alerts" },
     { command: "unalert", description: "Remove a price alert: /unalert 1 or all" },
     { command: "markets", description: "Every market" },
+    { command: "subscribe", description: "Market prices at the US open and close" },
+    { command: "unsubscribe", description: "Stop market updates" },
     { command: "tape", description: "The delayed public tape" },
     { command: "solvency", description: "Reserves against what is owed" },
     { command: "fees", description: "Venue and relayer fees" },
@@ -514,6 +545,8 @@ export const COMMANDS: Record<Lang, { command: string; description: string }[]> 
     { command: "alerts", description: "你的价格提醒" },
     { command: "unalert", description: "删除价格提醒：/unalert 1 或 all" },
     { command: "markets", description: "全部市场" },
+    { command: "subscribe", description: "美股开盘与收盘时的市场价格" },
+    { command: "unsubscribe", description: "停止市场更新" },
     { command: "tape", description: "延迟公开成交记录" },
     { command: "solvency", description: "储备与应付对比" },
     { command: "fees", description: "场所费与中继费" },

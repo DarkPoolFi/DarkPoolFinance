@@ -214,6 +214,26 @@ assert.equal(told[0]![1], "🔔 AAPL is above $350.00: the Chainlink reference i
 assert.match(told[1]![1], /TSLA 已低于 \$300\.00：Chainlink 参考价现为 <b>\$299\.50<\/b>/);
 delete process.env["TELEGRAM_BOT_TOKEN"];
 
+// TG-2: the market feed subscription
+const feedChats = new Map<number, string>();
+const feed = {
+  add: async (chat: number, lang: "en" | "zh") => {
+    const fresh = !feedChats.has(chat);
+    feedChats.set(chat, lang);
+    return fresh;
+  },
+  remove: async (chat: number) => Number(feedChats.delete(chat)),
+  list: async () => [],
+};
+const fd = (text: string, lang: "en" | "zh" = "en") => botReply(text, lang, load, false, NOW, { id: -100, pings, feed });
+assert.match((await fd("/subscribe"))!, /^📰 Subscribed\. .*open \(09:30 New York\) and close \(16:00\).*3% in a day.*only this chat's ID and language/);
+assert.deepEqual([...feedChats], [[-100, "en"]], "a group can subscribe; only chat and language kept");
+assert.match((await fd("/subscribe", "zh"))!, /你已订阅/);
+assert.equal(feedChats.get(-100), "zh", "subscribing again updates the language");
+assert.equal(await fd("/unsubscribe"), "Unsubscribed. No more market updates here.");
+assert.equal(await fd("/unsubscribe"), "You were not subscribed. /subscribe starts market updates.");
+assert.match((await ask("/help"))!, /\/subscribe · market prices at the US open and close/);
+
 // a failing endpoint gives a plain message, never a stack
 assert.match((await botReply("/fees", "en", async () => Promise.reject(Error("boom")), true))!, /not available right now/);
 console.log("telegram.check: ok");
