@@ -222,7 +222,9 @@ function render() {
     '</tbody></table>';
   $('#sp-deposit-fee').textContent = Number(v.depositFeeEth) > 0 ? `Each deposit also sends ${v.depositFeeEth} ETH to the operator, which pays for adding it to the pool tree.` : '';
   $('#sp-disclosure').hidden = !v.disclosure;
-  $('#sp-relay-fee').textContent = `ETH withdrawals go through the relayer for ${v.relayFees.transactEth} ETH, taken from your notes, so the destination is never linked to your wallet.`;
+  $('#sp-relay-fee').textContent = `ETH withdrawals go through the relayer for ${v.relayFees.transactEth} ETH right now (it follows gas prices), taken from your notes, so the destination is never linked to your wallet.`;
+  $('#sp-send-fee').textContent = `ETH sends through the relayer pay ${v.relayFees.transactEth} ETH now, taken from your notes. The fee follows gas prices.`;
+  $('#sp-notes-fee').textContent = `Each ETH merge or split through the relayer pays ${v.relayFees.transactEth} ETH now, taken from your notes. The fee follows gas prices.`;
   $('#sp-order-fee').textContent = `Relayed orders pay ${v.relayFees.orderEth} ETH from a separate ETH note (if you have none, the order offers to prepare one), so nothing links the order to your wallet.`;
   publishActivity(v.activity).catch(() => {});
   announceSettled(v.orders);

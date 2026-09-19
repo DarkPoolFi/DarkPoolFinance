@@ -1063,7 +1063,6 @@
  "Disclosure published ({0}).": "披露已发布（{0}）。",
  "ETF token": "ETF 代币",
  "ETH moves through private transfers.": "ETH 通过私密转账转移。",
- "ETH withdrawals go through the relayer for {0} ETH, taken from your notes, so the destination is never linked to your wallet.": "ETH 提取通过中继器完成，费用 {0} ETH 从你的票据中扣除，因此目标地址不会与你的钱包关联。",
  "ETH.": "ETH。",
  "Each completed window records how your orders resolved.": "每个已完成的窗口都会记录你的订单结果。",
  "Each deposit also sends {0} ETH to the operator, which pays for adding it to the pool tree.": "每笔存入还会向运营方支付 {0} ETH，用于将其加入池树。",
@@ -1635,5 +1634,10 @@
  "link. It opens the bot with the plan’s schedule, and the bot messages you when each round is due, on the plan’s own clock. Missed rounds are skipped, as the plan skips them. Nothing is sent from the dashboard.": "链接。它会带着计划的时间表打开机器人，机器人会按计划自身的时间在每一轮到期时通知你。错过的轮次会被跳过，与计划本身的处理方式相同。仪表盘不会发送任何内容。",
  "The link carries a random label, the next round’s time, the interval and the rounds left. Turning reminders on tells DarkpoolFi that your Telegram account has a buy plan and when it runs. Nothing else is shared: not the market, the amount, your orders or your wallet. The schedule is deleted after the last round.": "该链接只包含一个随机标签、下一轮时间、间隔和剩余轮数。开启提醒会让 DarkpoolFi 知道你的 Telegram 账户有一个买入计划及其执行时间。除此之外不会共享任何信息：不包括市场、金额、你的订单或钱包。时间表会在最后一轮后删除。",
  ", or the plan’s": " 或计划上的",
- "link, deletes it sooner.": "链接可提前删除。"
+ "link, deletes it sooner.": "链接可提前删除。",
+ "ETH sends through the relayer pay {0} ETH now, taken from your notes. The fee follows gas prices.": "通过中继器发送 ETH 当前需支付 {0} ETH，从你的票据中扣除。该费用随 Gas 价格变动。",
+ "ETH withdrawals go through the relayer for {0} ETH right now (it follows gas prices), taken from your notes, so the destination is never linked to your wallet.": "ETH 提取通过中继器完成，当前费用 {0} ETH（随 Gas 价格变动）从你的票据中扣除，因此目标地址不会与你的钱包关联。",
+ "Each ETH merge or split through the relayer pays {0} ETH now, taken from your notes. The fee follows gas prices.": "每次通过中继器合并或拆分 ETH 当前需支付 {0} ETH，从你的票据中扣除。该费用随 Gas 价格变动。",
+ "Not enough shielded {0}: this needs {1} {2}, including the relayer fee of {3} {4}, and you have {5} {6}.": "隐私 {0} 不足：此操作需要 {1} {2}（含 {3} {4} 的中继费），而你只有 {5} {6}。",
+ "This needs {0} {1}: {2} plus the relayer fee of {3} {4}, which rises with gas prices. The most one transaction can take from your notes is {5} {6}. Enter a smaller amount, try again when gas falls, or submit from your wallet.": "此操作需要 {0} {1}：{2} 加上 {3} {4} 的中继费，该费用随 Gas 价格上涨。单笔交易最多可从你的票据中使用 {5} {6}。请输入更小的金额、等 Gas 回落后重试，或从你的钱包提交。"
 }

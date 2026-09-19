@@ -386,8 +386,13 @@ export class ShieldedAccount {
       .sort((a, b) => (a.amount > b.amount ? -1 : 1));
   }
 
-  /** The smallest single note covering `need`, else the smallest-total pair from one deposit (same label) that does. */
-  private cover(asset: bigint, need: bigint, maxNotes: 1 | 2, except: Note[] = []): Note[] {
+  /**
+   * The smallest single note covering `amount` plus the relayer `fee`, else the smallest-total pair from one deposit
+   * (same label) that does. A shortfall the fee alone causes says so with the numbers (TU-02): the fee follows gas, so
+   * a spike otherwise reads as fragmented notes.
+   */
+  private cover(asset: bigint, amount: bigint, maxNotes: 1 | 2, fee = 0n, except: Note[] = []): Note[] {
+    const need = amount + fee;
     const notes = this.spendableNotes(asset, except);
     const single = [...notes].reverse().find((n) => n.amount >= need);
     if (single) return [single];
@@ -395,12 +400,21 @@ export class ShieldedAccount {
       const pair = this.bestPair(notes, (sum) => sum >= need, "smallest");
       if (pair) return pair;
     }
+    const sym = this.symbol(asset);
+    const fmt = (x: bigint) => formatUnits(x, this.decimalsOf(asset));
+    const pair = maxNotes === 2 ? this.bestPair(notes, () => true, "largest") : undefined;
+    const pairSum = pair ? pair[0].amount + pair[1].amount : 0n;
+    const most = notes[0] && notes[0].amount > pairSum ? notes[0].amount : pairSum;
+    if (fee > 0n && most >= amount) {
+      throw Error(
+        `This needs ${fmt(need)} ${sym}: ${fmt(amount)} plus the relayer fee of ${fmt(fee)} ${sym}, which rises with gas prices. The most one transaction can take from your notes is ${fmt(most)} ${sym}. Enter a smaller amount, try again when gas falls, or submit from your wallet.`,
+      );
+    }
     const total = this.notes.filter((n) => !n.spent && n.asset === asset).reduce((s, n) => s + n.amount, 0n);
-    throw Error(
-      total >= need
-        ? `Your ${this.symbol(asset)} is spread over notes from different deposits (only notes from the same deposit combine), or new notes are waiting for the next tree batch. Withdraw in parts, or wait a minute.`
-        : `Not enough shielded ${this.symbol(asset)}.`,
-    );
+    if (total >= need) {
+      throw Error(`Your ${sym} is spread over notes from different deposits (only notes from the same deposit combine), or new notes are waiting for the next tree batch. Withdraw in parts, or wait a minute.`);
+    }
+    throw Error(fee > 0n ? `Not enough shielded ${sym}: this needs ${fmt(need)} ${sym}, including the relayer fee of ${fmt(fee)} ${sym}, and you have ${fmt(total)} ${sym}.` : `Not enough shielded ${sym}.`);
   }
 
   /** Two notes with the same label: the pair meeting `ok` with the smallest or largest total. Notes arrive largest first. */
@@ -587,7 +601,7 @@ export class ShieldedAccount {
     const amount = toUnits(amountText, this.decimalsOf(asset));
     if (!amount || amount <= 0n) throw Error("Enter an amount.");
     const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
-    return this.transact(asset, this.cover(asset, amount + fee, 2), [], amount, getAddress(to), selfSubmit, progress);
+    return this.transact(asset, this.cover(asset, amount, 2, fee), [], amount, getAddress(to), selfSubmit, progress);
   }
 
   /** This account's shielded address: what someone else needs to pay it, and nothing more. */
@@ -609,7 +623,7 @@ export class ShieldedAccount {
     const amount = toUnits(amountText, this.decimalsOf(asset));
     if (!amount || amount <= 0n) throw Error("Enter an amount.");
     const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
-    return this.transact(asset, this.cover(asset, amount + fee, 2), [amount], 0n, ZeroAddress, selfSubmit, progress, to);
+    return this.transact(asset, this.cover(asset, amount, 2, fee), [amount], 0n, ZeroAddress, selfSubmit, progress, to);
   }
 
   /** Merge the largest pair of spendable `symbol` notes that come from the same deposit. */
@@ -629,7 +643,7 @@ export class ShieldedAccount {
     const amount = toUnits(amountText, this.decimalsOf(asset));
     if (!amount || amount <= 0n) throw Error("Enter an amount.");
     const fee = asset === ETH && !selfSubmit ? BigInt(this.config.relayFees.transactWei) : 0n;
-    return this.transact(asset, this.cover(asset, amount + fee + 1n, 1), [amount], 0n, ZeroAddress, selfSubmit, progress);
+    return this.transact(asset, this.cover(asset, amount, 1, fee), [amount], 0n, ZeroAddress, selfSubmit, progress);
   }
 
   /** What tidying `symbol`'s notes would do and cost (see tidyPlan), before anything is sent. ETH keeps a fee note. */
