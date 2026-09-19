@@ -15,6 +15,10 @@ export default defineConfig({
     // (traceDeps is forwarded to nitro but missing from the wrapper's deliberately narrow option type.) bb.js's WASM and
     // worker scripts are loaded by path, so scripts/ship-provers.mjs copies them in after the build.
     traceDeps: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/acvm_js", "@noir-lang/noirc_abi"],
+    // TU-18: the pool cron can prove two or three times in one run; its worst logged run took 424 s (tree batch), so the
+    // one server function gets 800 s (the Pro maximum) rather than the project default. Not per route: a
+    // functionRules entry becomes a second function, which scripts/ship-provers.mjs does not fill with bb.js's files.
+    vercel: { functions: { maxDuration: 800 } },
     // Every response is cross-origin isolated (TU-20), so bb.js can prove with threads (SharedArrayBuffer). Site-wide,
     // not only /dashboard: isolation is fixed when a document loads, so a visitor arriving on / and navigating client
     // side would otherwise prove on one thread. What the pages load from other origins allows it: Google Fonts sends
