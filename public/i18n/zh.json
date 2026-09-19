@@ -1639,5 +1639,6 @@
  "ETH withdrawals go through the relayer for {0} ETH right now (it follows gas prices), taken from your notes, so the destination is never linked to your wallet.": "ETH 提取通过中继器完成，当前费用 {0} ETH（随 Gas 价格变动）从你的票据中扣除，因此目标地址不会与你的钱包关联。",
  "Each ETH merge or split through the relayer pays {0} ETH now, taken from your notes. The fee follows gas prices.": "每次通过中继器合并或拆分 ETH 当前需支付 {0} ETH，从你的票据中扣除。该费用随 Gas 价格变动。",
  "Not enough shielded {0}: this needs {1} {2}, including the relayer fee of {3} {4}, and you have {5} {6}.": "隐私 {0} 不足：此操作需要 {1} {2}（含 {3} {4} 的中继费），而你只有 {5} {6}。",
- "This needs {0} {1}: {2} plus the relayer fee of {3} {4}, which rises with gas prices. The most one transaction can take from your notes is {5} {6}. Enter a smaller amount, try again when gas falls, or submit from your wallet.": "此操作需要 {0} {1}：{2} 加上 {3} {4} 的中继费，该费用随 Gas 价格上涨。单笔交易最多可从你的票据中使用 {5} {6}。请输入更小的金额、等 Gas 回落后重试，或从你的钱包提交。"
+ "This needs {0} {1}: {2} plus the relayer fee of {3} {4}, which rises with gas prices. The most one transaction can take from your notes is {5} {6}. Enter a smaller amount, try again when gas falls, or submit from your wallet.": "此操作需要 {0} {1}：{2} 加上 {3} {4} 的中继费，该费用随 Gas 价格上涨。单笔交易最多可从你的票据中使用 {5} {6}。请输入更小的金额、等 Gas 回落后重试，或从你的钱包提交。",
+ "The relayer is temporarily out of gas, so nothing was sent and your notes are untouched. Try again in a few minutes, or submit from your wallet.": "中继器暂时没有足够的 Gas，因此没有发送任何交易，你的票据未受影响。请几分钟后重试，或从你的钱包提交。"
 }

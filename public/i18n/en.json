@@ -1136,6 +1136,7 @@
  "The relayer has not confirmed this transaction. If it went through, your balance shows it within a few minutes; check before trying again.",
  "The relayer is sending another transaction.",
  "The relayer is submitting it…",
+ "The relayer is temporarily out of gas, so nothing was sent and your notes are untouched. Try again in a few minutes, or submit from your wallet.",
  "The relayer never received this transaction, so nothing was sent. Try again.",
  "The remaining lock returns to you as a note after the window settles.",
  "The request was rejected in MetaMask.",

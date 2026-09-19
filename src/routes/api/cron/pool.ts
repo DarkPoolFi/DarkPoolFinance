@@ -8,13 +8,11 @@ import { operator } from "@/server/darkpool/pool/contract";
 import { indexPool } from "@/server/darkpool/pool/indexer";
 import { settleRelays } from "@/server/darkpool/pool/relay";
 import { STUCK_AFTER_SEC, tendSends } from "@/server/darkpool/pool/sends";
-import { sweepFees } from "@/server/darkpool/pool/sweep";
+import { LOW_OPERATOR_WEI, sweepFees } from "@/server/darkpool/pool/sweep";
 import { advancePoolTree } from "@/server/darkpool/pool/tree";
 import { runPoolWindows } from "@/server/darkpool/pool/windows";
 import { sendBuyReminders, sendPriceAlerts, sendSettlementPings } from "@/server/darkpool/telegram";
 import { runMarketFeed } from "@/server/darkpool/telegram-feed";
-
-const LOW_OPERATOR_WEI = 1_000_000_000_000_000n; // 0.001 ETH ≈ 3–4 tree batches or settlements
 
 // Every minute: re-broadcast or bump stuck operator sends, settle relay fees against gas paid, index the shielded pool's events, append queued commitments,
 // seal and settle finished windows, ping the Telegram chats waiting on them, publish the association set, sweep settlement fees to the operator. Sends go

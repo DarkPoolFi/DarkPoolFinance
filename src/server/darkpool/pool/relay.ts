@@ -99,6 +99,10 @@ export function rejection(e: unknown): UserError | null {
   }
 }
 
+/** TU-04: the node refused the relayer's send because the operator wallet cannot cover its gas. */
+export const outOfGas = (e: unknown) =>
+  (e as { code?: string } | null)?.code === "INSUFFICIENT_FUNDS" || /insufficient funds/i.test(String((e as { shortMessage?: string; message?: string } | null)?.shortMessage ?? (e as Error)?.message ?? e));
+
 async function checkFee(kind: RelayKind, relayer: string, fee: bigint) {
   if (relayer !== operator().address) throw new UserError(`relayer must be ${operator().address}`);
   const quote = await relayQuote(kind);
@@ -164,6 +168,10 @@ async function submit(kind: RelayKind, fee: bigint, quote: bigint, fn: string, a
     tx = await sendPool(fn, args);
   } catch (e) {
     await release();
+    if (outOfGas(e)) {
+      await alert("The relayer (pool operator wallet) is out of gas; relayed calls are failing. Top it up", { operator: operator().address }, { key: "relayer-out-of-gas", everySec: 1800 });
+      throw new UserError("The relayer is temporarily out of gas, so nothing was sent and your notes are untouched. Try again in a few minutes, or submit from your wallet.");
+    }
     const rejected = rejection(e);
     if (rejected) throw rejected;
     const reason = (e as { shortMessage?: string; message?: string }).shortMessage ?? String(e);

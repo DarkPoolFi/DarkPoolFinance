@@ -24,6 +24,16 @@ interface FeeNote {
 
 const zeroPath = () => Array<bigint>(DEPTH).fill(0n);
 
+/** Below this the operator wallet is low (≈ 3–4 tree batches or settlements): alerts fire and fees are swept sooner. */
+export const LOW_OPERATOR_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+
+/**
+ * The fee total worth sweeping, given one sweep costs about one relayed transaction. Normally twice that; while the
+ * operator wallet is low (TU-04) as soon as a sweep recovers a quarter more than it costs, so trading fees refill the
+ * wallet before relays fail, without dust sweeps that cost more than they bring in.
+ */
+export const sweepMinimum = (cost: bigint, operatorWei: bigint) => (operatorWei < LOW_OPERATOR_WEI ? (cost * 5n) / 4n : 2n * cost);
+
 const ROUTER = new Interface(["function distribute() returns (uint256, uint256)"]);
 
 export async function sweepFees() {
@@ -47,7 +57,8 @@ export async function sweepFees() {
   if (gone.length) await rpc("dark_pool_fee_notes_spent", { p_commitments: gone.map((r) => r.commitment) });
   const ins = notes.filter((_, i) => !spent[i]).sort((a, b) => (a.amount > b.amount ? -1 : 1)).slice(0, 2);
   const total = ins.reduce((s, r) => s + r.amount, 0n);
-  const minimum = 2n * (await relayQuote("transact")); // a sweep costs about one relayed transaction
+  const [cost, operatorWei] = await Promise.all([relayQuote("transact"), provider().getBalance(operator().address)]);
+  const minimum = sweepMinimum(cost, router ? LOW_OPERATOR_WEI : operatorWei); // with a fee router the sweep does not refill the operator
   if (total < minimum) return { idle: true, unswept: String(total), minimum: String(minimum) };
 
   const leaves = (await rpc<string[]>("dark_pool_leaves", { p_from: 0, p_limit: size })).map((x) => BigInt(x));

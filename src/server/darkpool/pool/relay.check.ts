@@ -4,7 +4,8 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { Interface } from "ethers";
-import { rejection } from "./relay";
+import { outOfGas, rejection } from "./relay";
+import { LOW_OPERATOR_WEI, sweepMinimum } from "./sweep";
 
 const iface = new Interface(["error NoteSpent()", "error VenueFull()", "error SumcheckFailed()", "error InvalidProof()", "error ProofLengthWrongWithLogN(uint256, uint256, uint256)"]);
 const data = (name: string, args: unknown[] = []) => iface.encodeErrorResult(name, args);
@@ -18,6 +19,13 @@ assert.match(text({ data: data("ProofLengthWrongWithLogN", [19, 1, 2]) })!, /pro
 assert.equal(text({ data: "0xdeadbeef" }), "The pool rejected this request. Refresh the page and try again.");
 assert.equal(rejection({ shortMessage: "insufficient funds for intrinsic transaction cost" }), null);
 assert.equal(rejection(new Error("network")), null);
+
+// TU-04: a drained relayer is named, not reported as the pool refusing; the sweep lowers its bar only while low
+assert.ok(outOfGas({ code: "INSUFFICIENT_FUNDS", shortMessage: "insufficient funds for intrinsic transaction cost" }));
+assert.ok(outOfGas(new Error("insufficient funds for gas * price + value")));
+assert.ok(!outOfGas(new Error("network")) && !outOfGas(null));
+assert.equal(sweepMinimum(100n, LOW_OPERATOR_WEI), 200n);
+assert.equal(sweepMinimum(100n, LOW_OPERATOR_WEI - 1n), 125n);
 
 // every custom error the pool and the verifiers declare has a case (named or the verifier default)
 const src = readFileSync(new URL("./relay.ts", import.meta.url), "utf8");
